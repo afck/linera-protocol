@@ -603,7 +603,7 @@ enum ClientCommand {
 
         /// Network address
         #[structopt(long)]
-        address: String,
+        address: Option<String>,
 
         /// Voting power
         #[structopt(long, default_value = "1")]
@@ -895,9 +895,15 @@ where
                 let committee = chain_client.local_committee().await.unwrap();
                 let mut validators = committee.validators;
                 match command {
+                    RemoveValidator { name } | SetValidator { name, votes: 0, .. } => {
+                        if validators.remove(&name).is_none() {
+                            warn!("Skipping removal of nonexistent validator");
+                            return Ok(());
+                        }
+                    }
                     SetValidator {
                         name,
-                        address,
+                        address: Some(address),
                         votes,
                     } => {
                         validators.insert(
@@ -908,11 +914,15 @@ where
                             },
                         );
                     }
-                    RemoveValidator { name } => {
-                        if validators.remove(&name).is_none() {
-                            warn!("Skipping removal of nonexistent validator");
-                            return Ok(());
-                        }
+                    SetValidator {
+                        name,
+                        address: None,
+                        votes,
+                    } => {
+                        let Some(validator) = validators.get_mut(&name) else {
+                            bail!("Address required for new validator");
+                        };
+                        validator.votes = votes;
                     }
                     _ => unreachable!(),
                 }
