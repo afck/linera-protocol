@@ -350,6 +350,27 @@ where
                 );
                 Ok(*identity)
             }
+            ChainManagerInfo::MultiFt(m) => {
+                let mut identities = Vec::new();
+                for owner in m.owners.keys() {
+                    if self.known_key_pairs.contains_key(owner) {
+                        identities.push(*owner);
+                    }
+                }
+                if identities.is_empty() {
+                    bail!(
+                        "Cannot find suitable identity to interact with multi-owner chain {}",
+                        self.chain_id
+                    );
+                }
+                if identities.len() >= 2 {
+                    bail!(
+                        "Found several possible identities to interact with multi-owner chain {}",
+                        self.chain_id
+                    );
+                }
+                Ok(identities.pop().unwrap())
+            }
             ChainManagerInfo::None => Err(NodeError::InactiveLocalChain(self.chain_id).into()),
         }
     }
@@ -997,6 +1018,29 @@ where
         // Send the query to validators.
         let final_certificate = match self.chain_info().await?.manager {
             ChainManagerInfo::Multi(_) => {
+                // Need two round-trips.
+                let certificate = self
+                    .communicate_chain_updates(
+                        &committee,
+                        self.chain_id,
+                        CommunicateAction::SubmitBlockForValidation(proposal.clone()),
+                    )
+                    .await?
+                    .expect("a certificate");
+                assert!(matches!(
+                    certificate.value(),
+                    CertificateValue::ValidatedBlock { executed_block, .. }
+                        if executed_block.block == proposal.content.block
+                ));
+                self.communicate_chain_updates(
+                    &committee,
+                    self.chain_id,
+                    CommunicateAction::FinalizeBlock(certificate),
+                )
+                .await?
+                .expect("a certificate")
+            }
+            ChainManagerInfo::MultiFt(_) => {
                 // Need two round-trips.
                 let certificate = self
                     .communicate_chain_updates(

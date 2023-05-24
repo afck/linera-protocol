@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod multi;
+mod multi_ft;
 mod single;
 
 pub use multi::{MultiOwnerManager, MultiOwnerManagerInfo};
+pub use multi_ft::{MultiOwnerFtManager, MultiOwnerFtManagerInfo};
 pub use single::{SingleOwnerManager, SingleOwnerManagerInfo};
 
 use crate::{
@@ -15,7 +17,6 @@ use linera_base::{
     crypto::{CryptoHash, KeyPair, PublicKey},
     data_types::{BlockHeight, RoundNumber},
     doc_scalar, ensure,
-    identifiers::Owner,
 };
 use linera_execution::ChainOwnership;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,8 @@ pub enum ChainManager {
     Single(Box<SingleOwnerManager>),
     /// The chain is managed by multiple owners.
     Multi(Box<MultiOwnerManager>),
+    /// The chain is managed by multiple owners some of which are potentially faulty.
+    MultiFt(Box<MultiOwnerFtManager>),
 }
 
 doc_scalar!(
@@ -58,6 +61,9 @@ impl ChainManager {
             ChainOwnership::Multi { owners } => {
                 *self = ChainManager::Multi(Box::new(MultiOwnerManager::new(owners.clone())));
             }
+            ChainOwnership::MultiFt { owners } => {
+                *self = ChainManager::MultiFt(Box::new(MultiOwnerFtManager::new(owners.clone())));
+            }
         }
     }
 
@@ -65,16 +71,11 @@ impl ChainManager {
         !matches!(self, ChainManager::None)
     }
 
-    pub fn verify_owner(&self, owner: &Owner) -> Option<PublicKey> {
+    pub fn verify_owner(&self, proposal: &BlockProposal) -> Option<PublicKey> {
         match self {
-            ChainManager::Single(manager) => {
-                if manager.owner == *owner {
-                    Some(manager.public_key)
-                } else {
-                    None
-                }
-            }
-            ChainManager::Multi(manager) => manager.owners.get(owner).copied(),
+            ChainManager::Single(manager) => manager.verify_owner(proposal),
+            ChainManager::Multi(manager) => manager.verify_owner(proposal),
+            ChainManager::MultiFt(manager) => manager.verify_owner(proposal),
             ChainManager::None => None,
         }
     }
@@ -85,6 +86,10 @@ impl ChainManager {
                 let round = manager.round();
                 round.try_add_one().unwrap_or(round)
             }
+            ChainManager::MultiFt(m) => {
+                let round = m.round();
+                round.try_add_one().unwrap_or(round)
+            }
             _ => RoundNumber::default(),
         }
     }
@@ -93,6 +98,7 @@ impl ChainManager {
         match self {
             ChainManager::Single(manager) => manager.pending(),
             ChainManager::Multi(manager) => manager.pending(),
+            ChainManager::MultiFt(manager) => manager.pending(),
             _ => None,
         }
     }
@@ -111,6 +117,7 @@ impl ChainManager {
         match self {
             ChainManager::Single(manager) => manager.check_proposed_block(new_block, new_round),
             ChainManager::Multi(manager) => manager.check_proposed_block(new_block, new_round),
+            ChainManager::MultiFt(manager) => manager.check_proposed_block(new_block, new_round),
             _ => panic!("unexpected chain manager"),
         }
     }
@@ -122,6 +129,7 @@ impl ChainManager {
     ) -> Result<Outcome, ChainError> {
         match self {
             ChainManager::Multi(manager) => manager.check_validated_block(new_block, new_round),
+            ChainManager::MultiFt(manager) => manager.check_validated_block(new_block, new_round),
             _ => panic!("unexpected chain manager"),
         }
     }
@@ -140,6 +148,9 @@ impl ChainManager {
             ChainManager::Multi(manager) => {
                 manager.create_vote(proposal, messages, state_hash, key_pair)
             }
+            ChainManager::MultiFt(manager) => {
+                manager.create_vote(proposal, effects, state_hash, key_pair)
+            }
             _ => panic!("unexpected chain manager"),
         }
     }
@@ -147,6 +158,7 @@ impl ChainManager {
     pub fn create_final_vote(&mut self, certificate: Certificate, key_pair: Option<&KeyPair>) {
         match self {
             ChainManager::Multi(manager) => manager.create_final_vote(certificate, key_pair),
+            ChainManager::MultiFt(manager) => manager.create_final_vote(certificate, key_pair),
             _ => panic!("unexpected chain manager"),
         }
     }
@@ -163,6 +175,8 @@ pub enum ChainManagerInfo {
     Single(Box<SingleOwnerManagerInfo>),
     /// The chain is managed by multiple owners.
     Multi(Box<MultiOwnerManagerInfo>),
+    /// The chain is managed by multiple owners, some of which may be faulty.
+    MultiFt(Box<MultiOwnerFtManagerInfo>),
 }
 
 impl From<&ChainManager> for ChainManagerInfo {
@@ -170,6 +184,7 @@ impl From<&ChainManager> for ChainManagerInfo {
         match manager {
             ChainManager::Single(single) => ChainManagerInfo::Single(Box::new((&**single).into())),
             ChainManager::Multi(multi) => ChainManagerInfo::Multi(Box::new((&**multi).into())),
+            ChainManager::MultiFt(multi) => ChainManagerInfo::MultiFt(Box::new((&**multi).into())),
             ChainManager::None => ChainManagerInfo::None,
         }
     }
@@ -183,6 +198,9 @@ impl ChainManagerInfo {
                 info.add_values(single)
             }
             (ChainManagerInfo::Multi(info), ChainManager::Multi(multi)) => info.add_values(multi),
+            (ChainManagerInfo::MultiFt(info), ChainManager::MultiFt(multi)) => {
+                info.add_values(multi)
+            }
             (_, _) => error!("cannot assign info from a chain manager of different type"),
         }
     }
@@ -191,6 +209,7 @@ impl ChainManagerInfo {
         match self {
             ChainManagerInfo::Single(single) => single.pending.as_ref(),
             ChainManagerInfo::Multi(multi) => multi.pending.as_ref(),
+            ChainManagerInfo::MultiFt(multi) => multi.pending.as_ref(),
             _ => None,
         }
     }
@@ -198,6 +217,7 @@ impl ChainManagerInfo {
     pub fn next_round(&self) -> RoundNumber {
         match self {
             ChainManagerInfo::Multi(multi) => multi.next_round(),
+            ChainManagerInfo::MultiFt(multi) => multi.next_round(),
             _ => RoundNumber::default(),
         }
     }

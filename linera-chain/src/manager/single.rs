@@ -97,6 +97,10 @@ impl SingleOwnerManager {
             self.pending = Some(vote);
         }
     }
+
+    pub fn verify_owner(&self, proposal: &BlockProposal) -> Option<PublicKey> {
+        (self.owner == proposal.owner).then_some(self.public_key)
+    }
 }
 
 /// Chain manager information that is included in `ChainInfo` sent to clients, about chains
