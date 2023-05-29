@@ -149,7 +149,7 @@ impl ChainManager {
                 manager.create_vote(proposal, messages, state_hash, key_pair)
             }
             ChainManager::MultiFt(manager) => {
-                manager.create_vote(proposal, effects, state_hash, key_pair)
+                manager.create_vote(proposal, messages, state_hash, key_pair)
             }
             _ => panic!("unexpected chain manager"),
         }

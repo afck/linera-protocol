@@ -646,7 +646,9 @@ where
             }
             CommunicateAction::FinalizeBlock(validity_certificate) => {
                 let round = validity_certificate.round;
-                let conf_value = validity_certificate.value.into_confirmed();
+                let Some(conf_value) = validity_certificate.value.into_confirmed() else {
+                    bail!("Unexpected certificate value for finalized block");
+                };
                 Ok(Some(Certificate::new(conf_value, round, signatures)))
             }
             CommunicateAction::AdvanceToNextBlockHeight(_) => Ok(None),

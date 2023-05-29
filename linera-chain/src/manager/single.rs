@@ -55,8 +55,9 @@ impl SingleOwnerManager {
         if let Some(vote) = &self.pending {
             let block = match &vote.value.inner() {
                 CertificateValue::ConfirmedBlock { executed_block, .. } => &executed_block.block,
-                CertificateValue::ValidatedBlock { .. } => {
-                    return Err(ChainError::InvalidBlockProposal)
+                value => {
+                    let msg = format!("Unexpected value: {:?}", value);
+                    return Err(ChainError::InternalError(msg));
                 }
             };
             if block == new_block {

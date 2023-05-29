@@ -547,6 +547,7 @@ where
             notify_when_messages_are_delivered,
         )
         .await;
+        self.cache_recent_value(&certificate.value).await;
         Ok((info, actions))
     }
 
@@ -611,7 +612,7 @@ where
             CertificateValue::ValidatedBlock {
                 executed_block: ExecutedBlock { block, .. },
             } => block,
-            CertificateValue::ConfirmedBlock { .. } => panic!("Expecting a validation certificate"),
+            _ => panic!("Expecting a validation certificate"),
         };
         // Check that the chain is active and ready for this confirmation.
         // Verify the certificate. Returns a catch-all error to make client code more robust.
@@ -636,16 +637,20 @@ where
                 .check_validated_block(block, certificate.round)?
                 == ChainManagerOutcome::Skip
         {
-            // If we just processed the same pending block, return the chain info
-            // unchanged.
+            // If we just processed the same pending block, return the chain info unchanged.
             return Ok(ChainInfoResponse::new(&chain, self.key_pair()));
         }
         chain
             .manager
             .get_mut()
-            .create_final_vote(certificate, self.key_pair());
+            .create_final_vote(certificate.clone(), self.key_pair());
         let info = ChainInfoResponse::new(&chain, self.key_pair());
         chain.save().await?;
+        if self.cache_recent_value(&certificate.value).await {
+            if let Some(value) = certificate.value.into_confirmed() {
+                self.cache_recent_value(&value).await;
+            }
+        }
         Ok(info)
     }
 
@@ -715,20 +720,15 @@ where
         Ok(Some(last_updated_height))
     }
 
-    pub async fn cache_recent_value(&mut self, value: &HashedValue) {
+    pub async fn cache_recent_value(&mut self, value: &HashedValue) -> bool {
         let hash = value.hash();
         let mut recent_values = self.recent_values.lock().await;
         if recent_values.contains(&hash) {
-            return;
-        }
-        if value.inner().is_validated() {
-            // Cache the corresponding confirmed block, too, in case we get a certificate.
-            let conf_value = value.clone().into_confirmed();
-            let conf_hash = conf_value.hash();
-            recent_values.push(conf_hash, conf_value);
+            return false;
         }
         // Cache the certificate so that clients don't have to send the value again.
         recent_values.push(hash, value.clone());
+        true
     }
 
     /// Returns a stored [`Certificate`] for a chain's block.
@@ -770,24 +770,29 @@ where
         chain_id: ChainId,
         message_id: MessageId,
     ) -> Result<Option<IncomingMessage>, WorkerError> {
-        let Some(certificate) = self.read_certificate(message_id.chain_id, message_id.height).await?
-            else { return Ok(None) };
-
+        let sender = message_id.chain_id;
         let index = usize::try_from(message_id.index).map_err(|_| ArithmeticError::Overflow)?;
-        let Some(outgoing_message) = certificate.value().messages().get(index).cloned()
-            else { return Ok(None) };
+        let Some(certificate) = self.read_certificate(sender, message_id.height).await? else {
+            return Ok(None);
+        };
+        let Some(messages) = certificate.value().messages() else {
+            return Ok(None);
+        };
+        let Some(outgoing_message) = messages.get(index).cloned() else {
+            return Ok(None)
+        };
 
-        let application_id = outgoing_message.message.application_id();
-        let origin = Origin {
-            sender: message_id.chain_id,
-            medium: match outgoing_message.destination {
-                Destination::Recipient(_) => Medium::Direct,
-                Destination::Subscribers(name) => Medium::Channel(ChannelFullName {
+        let medium = match outgoing_message.destination {
+            Destination::Recipient(_) => Medium::Direct,
+            Destination::Subscribers(name) => {
+                let application_id = outgoing_message.message.application_id();
+                Medium::Channel(ChannelFullName {
                     application_id,
                     name,
-                }),
-            },
+                })
+            }
         };
+        let origin = Origin { sender, medium };
 
         let mut chain = self.storage.load_active_chain(chain_id).await?;
         let mut inbox = chain.inboxes.try_load_entry_mut(&origin).await?;
@@ -940,21 +945,23 @@ where
         let (info, actions) = match certificate.value() {
             CertificateValue::ValidatedBlock { .. } => {
                 // Confirm the validated block.
-                self.process_validated_block(certificate.clone())
+                self.process_validated_block(certificate)
                     .await
                     .map(|info| (info, NetworkActions::default()))?
             }
             CertificateValue::ConfirmedBlock { .. } => {
                 // Execute the confirmed block.
                 self.process_confirmed_block(
-                    certificate.clone(),
+                    certificate,
                     &blobs,
                     notify_when_messages_are_delivered,
                 )
                 .await?
             }
+            CertificateValue::LeaderTimeout { .. } => {
+                todo!()
+            }
         };
-        self.cache_recent_value(&certificate.value).await;
         Ok((info, actions))
     }
 

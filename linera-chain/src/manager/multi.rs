@@ -17,6 +17,7 @@ use linera_base::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing::error;
 
 /// The specific state of a chain managed by multiple owners.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -105,6 +106,10 @@ impl MultiOwnerManager {
                     new_round >= *round,
                     ChainError::InsufficientRound(round.try_sub_one().unwrap())
                 ),
+                value => {
+                    let msg = format!("Unexpected value: {:?}", value);
+                    return Err(ChainError::InternalError(msg));
+                }
             }
         }
         if let Some(Certificate { round, .. }) = &self.locked {
@@ -142,7 +147,10 @@ impl MultiOwnerManager {
     pub fn create_final_vote(&mut self, certificate: Certificate, key_pair: Option<&KeyPair>) {
         // Record validity certificate. This is important to keep track of rounds
         // for non-voting nodes.
-        let value = certificate.value.clone().into_confirmed();
+        let Some(value) = certificate.value.clone().into_confirmed() else {
+            error!("Unexpected value for final vote: {:?}", certificate.value());
+            return;
+        };
         let round = certificate.round;
         self.locked = Some(certificate);
         if let Some(key_pair) = key_pair {

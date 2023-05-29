@@ -112,6 +112,15 @@ CertificateValue:
         STRUCT:
           - executed_block:
               TYPENAME: ExecutedBlock
+    2:
+      LeaderTimeout:
+        STRUCT:
+          - chain_id:
+              TYPENAME: ChainId
+          - height:
+              TYPENAME: BlockHeight
+          - epoch:
+              TYPENAME: Epoch
 ChainAndHeight:
   STRUCT:
     - chain_id:
@@ -211,6 +220,10 @@ ChainManagerInfo:
       Multi:
         NEWTYPE:
           TYPENAME: MultiOwnerManagerInfo
+    3:
+      MultiFt:
+        NEWTYPE:
+          TYPENAME: MultiOwnerFtManagerInfo
 ChannelFullName:
   STRUCT:
     - application_id:
@@ -378,6 +391,30 @@ MessageId:
     - height:
         TYPENAME: BlockHeight
     - index: U32
+MultiOwnerFtManagerInfo:
+  STRUCT:
+    - owners:
+        MAP:
+          KEY:
+            TYPENAME: Owner
+          VALUE:
+            TUPLE:
+              - TYPENAME: PublicKey
+              - U128
+    - requested_proposed:
+        OPTION:
+          TYPENAME: BlockProposal
+    - requested_locked:
+        OPTION:
+          TYPENAME: Certificate
+    - pending:
+        OPTION:
+          TYPENAME: LiteVote
+    - requested_pending_value:
+        OPTION:
+          TYPENAME: CertificateValue
+    - round:
+        TYPENAME: RoundNumber
 MultiOwnerManagerInfo:
   STRUCT:
     - owners:
