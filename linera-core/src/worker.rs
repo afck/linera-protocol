@@ -630,13 +630,17 @@ where
             }
         );
         certificate.check(committee)?;
-        if chain.tip_state.get().already_validated_block(block)?
+        if chain
+            .tip_state
+            .get()
+            .already_validated_block(block.height)?
             || chain
                 .manager
                 .get_mut()
-                .check_validated_block(block, certificate.round)?
+                .check_validated_block(&certificate)?
                 == ChainManagerOutcome::Skip
         {
+            chain.save().await?;
             // If we just processed the same pending block, return the chain info unchanged.
             return Ok(ChainInfoResponse::new(&chain, self.key_pair()));
         }
@@ -651,6 +655,45 @@ where
                 self.cache_recent_value(&value).await;
             }
         }
+        Ok(info)
+    }
+
+    /// Processes a leader timeout issued from a multi-owner chain.
+    async fn process_leader_timeout(
+        &mut self,
+        certificate: Certificate,
+    ) -> Result<ChainInfoResponse, WorkerError> {
+        let (chain_id, height, epoch) = match certificate.value() {
+            CertificateValue::LeaderTimeout {
+                chain_id,
+                height,
+                epoch,
+                ..
+            } => (*chain_id, *height, *epoch),
+            _ => panic!("Expecting a leader timeout certificate"),
+        };
+        // Check that the chain is active and ready for this confirmation.
+        // Verify the certificate. Returns a catch-all error to make client code more robust.
+        let mut chain = self.storage.load_active_chain(chain_id).await?;
+        let (current_epoch, committee) = chain
+            .execution_state
+            .system
+            .current_committee()
+            .expect("chain is active");
+        ensure!(
+            epoch == current_epoch,
+            WorkerError::InvalidEpoch { chain_id, epoch }
+        );
+        certificate.check(committee)?;
+        if chain.tip_state.get().already_validated_block(height)? {
+            return Ok(ChainInfoResponse::new(&chain, self.key_pair()));
+        }
+        chain
+            .manager
+            .get_mut()
+            .handle_timeout_certificate(certificate.clone());
+        let info = ChainInfoResponse::new(&chain, self.key_pair());
+        chain.save().await?;
         Ok(info)
     }
 
@@ -945,9 +988,8 @@ where
         let (info, actions) = match certificate.value() {
             CertificateValue::ValidatedBlock { .. } => {
                 // Confirm the validated block.
-                self.process_validated_block(certificate)
-                    .await
-                    .map(|info| (info, NetworkActions::default()))?
+                let info = self.process_validated_block(certificate).await?;
+                (info, NetworkActions::default())
             }
             CertificateValue::ConfirmedBlock { .. } => {
                 // Execute the confirmed block.
@@ -959,7 +1001,9 @@ where
                 .await?
             }
             CertificateValue::LeaderTimeout { .. } => {
-                todo!()
+                // Handle the leader timeout.
+                let info = self.process_leader_timeout(certificate).await?;
+                (info, NetworkActions::default())
             }
         };
         Ok((info, actions))
@@ -975,6 +1019,18 @@ where
     ) -> Result<(ChainInfoResponse, NetworkActions), WorkerError> {
         trace!("{} <-- {:?}", self.nickname, query);
         let mut chain = self.storage.load_chain(query.chain_id).await?;
+        if query.request_leader_timeout {
+            if let Some(epoch) = chain.execution_state.system.epoch.get() {
+                if chain.manager.get_mut().vote_leader_timeout(
+                    query.chain_id,
+                    chain.tip_state.get().next_block_height,
+                    *epoch,
+                    self.key_pair(),
+                ) {
+                    chain.save().await?;
+                }
+            }
+        }
         let mut info = ChainInfo::from(&chain);
         if query.request_committees {
             info.requested_committees = Some(chain.execution_state.system.committees.get().clone());

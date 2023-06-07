@@ -90,11 +90,12 @@ impl MultiOwnerManager {
         Ok(Outcome::Accept)
     }
 
-    pub fn check_validated_block(
-        &self,
-        new_block: &Block,
-        new_round: RoundNumber,
-    ) -> Result<Outcome, ChainError> {
+    pub fn check_validated_block(&self, certificate: &Certificate) -> Result<Outcome, ChainError> {
+        let new_block = certificate
+            .value()
+            .block()
+            .expect("expected validated block");
+        let new_round = certificate.round;
         if let Some(Vote { value, round, .. }) = &self.pending {
             match value.inner() {
                 CertificateValue::ConfirmedBlock { executed_block } => {

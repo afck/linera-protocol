@@ -19,6 +19,7 @@ use linera_base::{
 use linera_execution::{pricing::PricingError, ExecutionError};
 use linera_views::views::ViewError;
 pub use manager::{ChainManager, ChainManagerInfo, Outcome as ChainManagerOutcome};
+use rand_distr::WeightedError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -95,8 +96,12 @@ pub enum ChainError {
     PreviousBlockMustBeConfirmedFirst,
     #[error("Invalid block proposal")]
     InvalidBlockProposal,
+    #[error("Multiple block proposals in one round")]
+    MultipleBlockProposals,
     #[error("Round number should be greater than {0:?}")]
     InsufficientRound(RoundNumber),
+    #[error("Round number should be {0:?}")]
+    WrongRound(RoundNumber),
     #[error("A different block for height {0:?} was already locked at round number {1:?}")]
     HasLockedBlock(BlockHeight, RoundNumber),
     #[error("Cannot confirm a block before its predecessors: {current_block_height:?}")]
@@ -111,4 +116,6 @@ pub enum ChainError {
     InternalError(String),
     #[error("Insufficient balance to pay the fees")]
     InsufficientBalance,
+    #[error("Invalid owner weights: {0}")]
+    OwnerWeightError(#[from] WeightedError),
 }

@@ -215,6 +215,7 @@ struct ValueHashAndRound(CryptoHash, RoundNumber);
 
 /// A vote on a statement from a validator.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test"), derive(Eq, PartialEq))]
 pub struct Vote {
     pub value: HashedValue,
     pub round: RoundNumber,
@@ -243,6 +244,11 @@ impl Vote {
             validator: self.validator,
             signature: self.signature,
         }
+    }
+
+    /// Returns the value this vote is for.
+    pub fn value(&self) -> &CertificateValue {
+        self.value.inner()
     }
 }
 
@@ -480,6 +486,11 @@ impl CertificateValue {
             | CertificateValue::ValidatedBlock { executed_block, .. } => Some(executed_block),
             CertificateValue::LeaderTimeout { .. } => None,
         }
+    }
+
+    pub fn block(&self) -> Option<&Block> {
+        self.executed_block()
+            .map(|executed_block| &executed_block.block)
     }
 }
 

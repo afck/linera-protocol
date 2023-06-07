@@ -17,8 +17,9 @@ use linera_base::{
     crypto::{CryptoHash, KeyPair, PublicKey},
     data_types::{BlockHeight, RoundNumber},
     doc_scalar, ensure,
+    identifiers::ChainId,
 };
-use linera_execution::ChainOwnership;
+use linera_execution::{committee::Epoch, ChainOwnership};
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
@@ -49,7 +50,7 @@ pub enum Outcome {
 }
 
 impl ChainManager {
-    pub fn reset(&mut self, ownership: &ChainOwnership) {
+    pub fn reset(&mut self, ownership: &ChainOwnership) -> Result<(), ChainError> {
         match ownership {
             ChainOwnership::None => {
                 *self = ChainManager::None;
@@ -62,9 +63,10 @@ impl ChainManager {
                 *self = ChainManager::Multi(Box::new(MultiOwnerManager::new(owners.clone())));
             }
             ChainOwnership::MultiFt { owners } => {
-                *self = ChainManager::MultiFt(Box::new(MultiOwnerFtManager::new(owners.clone())));
+                *self = ChainManager::MultiFt(Box::new(MultiOwnerFtManager::new(owners.clone())?));
             }
         }
+        Ok(())
     }
 
     pub fn is_active(&self) -> bool {
@@ -86,11 +88,8 @@ impl ChainManager {
                 let round = manager.round();
                 round.try_add_one().unwrap_or(round)
             }
-            ChainManager::MultiFt(m) => {
-                let round = m.round();
-                round.try_add_one().unwrap_or(round)
-            }
-            _ => RoundNumber::default(),
+            ChainManager::MultiFt(m) => m.next_round(),
+            ChainManager::None | ChainManager::Single(_) => RoundNumber::default(),
         }
     }
 
@@ -100,6 +99,21 @@ impl ChainManager {
             ChainManager::Multi(manager) => manager.pending(),
             ChainManager::MultiFt(manager) => manager.pending(),
             _ => None,
+        }
+    }
+
+    pub fn vote_leader_timeout(
+        &mut self,
+        chain_id: ChainId,
+        height: BlockHeight,
+        epoch: Epoch,
+        key_pair: Option<&KeyPair>,
+    ) -> bool {
+        match self {
+            ChainManager::MultiFt(manager) => {
+                manager.vote_leader_timeout(chain_id, height, epoch, key_pair)
+            }
+            ChainManager::Single(_) | ChainManager::Multi(_) | ChainManager::None => false,
         }
     }
 
@@ -123,13 +137,12 @@ impl ChainManager {
     }
 
     pub fn check_validated_block(
-        &self,
-        new_block: &Block,
-        new_round: RoundNumber,
+        &mut self,
+        certificate: &Certificate,
     ) -> Result<Outcome, ChainError> {
         match self {
-            ChainManager::Multi(manager) => manager.check_validated_block(new_block, new_round),
-            ChainManager::MultiFt(manager) => manager.check_validated_block(new_block, new_round),
+            ChainManager::Multi(manager) => manager.check_validated_block(certificate),
+            ChainManager::MultiFt(manager) => manager.check_validated_block(certificate),
             _ => panic!("unexpected chain manager"),
         }
     }
@@ -159,6 +172,13 @@ impl ChainManager {
         match self {
             ChainManager::Multi(manager) => manager.create_final_vote(certificate, key_pair),
             ChainManager::MultiFt(manager) => manager.create_final_vote(certificate, key_pair),
+            _ => panic!("unexpected chain manager"),
+        }
+    }
+
+    pub fn handle_timeout_certificate(&mut self, certificate: Certificate) {
+        match self {
+            ChainManager::MultiFt(manager) => manager.handle_timeout_certificate(certificate),
             _ => panic!("unexpected chain manager"),
         }
     }

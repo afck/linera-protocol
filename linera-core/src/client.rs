@@ -351,25 +351,24 @@ where
                 Ok(*identity)
             }
             ChainManagerInfo::MultiFt(m) => {
-                let mut identities = Vec::new();
-                for owner in m.owners.keys() {
-                    if self.known_key_pairs.contains_key(owner) {
-                        identities.push(*owner);
-                    }
-                }
-                if identities.is_empty() {
+                let mut identities = m
+                    .owners
+                    .keys()
+                    .filter(|owner| self.known_key_pairs.contains_key(owner));
+                let Some(identity) = identities.next() else {
                     bail!(
                         "Cannot find suitable identity to interact with multi-owner chain {}",
                         self.chain_id
                     );
-                }
-                if identities.len() >= 2 {
-                    bail!(
+                };
+                ensure!(
+                    identities.next().is_none(),
+                    anyhow!(
                         "Found several possible identities to interact with multi-owner chain {}",
                         self.chain_id
-                    );
-                }
-                Ok(identities.pop().unwrap())
+                    )
+                );
+                Ok(*identity)
             }
             ChainManagerInfo::None => Err(NodeError::InactiveLocalChain(self.chain_id).into()),
         }

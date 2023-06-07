@@ -413,7 +413,7 @@ MultiOwnerFtManagerInfo:
     - requested_pending_value:
         OPTION:
           TYPENAME: CertificateValue
-    - round:
+    - next_round:
         TYPENAME: RoundNumber
 MultiOwnerManagerInfo:
   STRUCT:

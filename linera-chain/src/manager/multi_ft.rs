@@ -11,15 +11,21 @@ use crate::{
 };
 use linera_base::{
     crypto::{CryptoHash, KeyPair, PublicKey},
-    data_types::RoundNumber,
+    data_types::{BlockHeight, RoundNumber, Timestamp},
     ensure,
-    identifiers::Owner,
+    identifiers::{ChainId, Owner},
 };
+use linera_execution::committee::Epoch;
 use rand_chacha::{rand_core::SeedableRng, ChaCha8Rng};
 use rand_distr::{Distribution, WeightedAliasIndex};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    time::Duration,
+};
 use tracing::error;
+
+const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The specific state of a chain with multiple owners some of which are potentially faulty.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -30,85 +36,134 @@ pub struct MultiOwnerFtManager {
     pub distribution: WeightedAliasIndex<u128>,
     /// Latest authenticated block that we have received.
     pub proposed: Option<BlockProposal>,
-    /// Latest validated proposal that we have seen (and voted to confirm).
+    /// Latest validated proposal that we have voted to confirm (or would have, if we are not a
+    /// validator).
     pub locked: Option<Certificate>,
-    /// Latest proposal that we have voted on (either to validate or to confirm it).
+    /// Latest leader timeout certificate we have received.
+    pub leader_timeout: Option<Certificate>,
+    /// Latest vote we have cast, to validate or confirm.
     pub pending: Option<Vote>,
+    /// Latest timeout vote we cast.
+    pub timeout_vote: Option<Vote>,
+    /// The validated blocks from rounds higher than `locked`.
+    pub validated: BTreeMap<RoundNumber, Certificate>,
+    /// The time after which we are ready to sign a timeout certificate for the current round.
+    pub round_timeout: Timestamp,
 }
 
 impl MultiOwnerFtManager {
-    pub fn new(owners: impl IntoIterator<Item = (Owner, (PublicKey, u128))>) -> Self {
+    pub fn new(
+        owners: impl IntoIterator<Item = (Owner, (PublicKey, u128))>,
+    ) -> Result<Self, ChainError> {
         let owners: BTreeMap<Owner, (PublicKey, u128)> = owners.into_iter().collect();
         let weights = owners.values().map(|(_, weight)| *weight).collect();
-        let distribution = WeightedAliasIndex::new(weights)
-            .expect("TODO: return error if weight sum is 0 or > u128::MAX.");
+        let distribution = WeightedAliasIndex::new(weights)?;
+        let round_timeout = Timestamp::now().saturating_add(TIMEOUT);
 
-        MultiOwnerFtManager {
+        Ok(MultiOwnerFtManager {
             owners,
             distribution,
             proposed: None,
             locked: None,
+            leader_timeout: None,
             pending: None,
-        }
+            timeout_vote: None,
+            validated: Default::default(),
+            round_timeout,
+        })
     }
 
-    pub fn round(&self) -> RoundNumber {
-        let mut current_round = RoundNumber::default();
-        if let Some(proposal) = &self.proposed {
-            if current_round < proposal.content.round {
-                current_round = proposal.content.round;
-            }
-        }
-        if let Some(Certificate { round, .. }) = &self.locked {
-            if current_round < *round {
-                current_round = *round;
-            }
-        }
-        current_round
+    /// Returns the round after the highest known leader timeout or validated block certificate.
+    pub fn next_round(&self) -> RoundNumber {
+        let validated = self.validated.keys().last().copied();
+        let leader_timeout = self.leader_timeout.as_ref();
+        leader_timeout
+            .map(|certificate| certificate.round)
+            .into_iter()
+            .chain(validated)
+            .max()
+            .map_or(RoundNumber(0), |previous_round| {
+                previous_round.try_add_one().unwrap_or(previous_round)
+            })
     }
 
+    /// Returns the most recent vote we cast.
     pub fn pending(&self) -> Option<&Vote> {
         self.pending.as_ref()
     }
 
-    /// Verify the safety of the block w.r.t. voting rules.
+    /// Verifies the safety of the block with respect to voting rules.
+    ///
+    /// We are allowed to vote for only one proposal in each round, but only if `locked.is_none()`
+    /// or if one of `validated` contains the proposed block.
     pub fn check_proposed_block(
         &self,
         new_block: &Block,
         new_round: RoundNumber,
     ) -> Result<Outcome, ChainError> {
-        if let Some(proposal) = &self.proposed {
-            if proposal.content.block == *new_block && proposal.content.round == new_round {
-                return Ok(Outcome::Skip);
+        let next_round = self.next_round();
+        ensure!(next_round == new_round, ChainError::WrongRound(next_round));
+        // Vote for at most one proposal per round.
+        if let Some(pending) = &self.pending {
+            if pending.value().block() == Some(new_block) && pending.round == new_round {
+                return Ok(Outcome::Skip); // Same proposal we already voted for.
             }
-            if new_round <= proposal.content.round {
-                return Err(ChainError::InsufficientRound(proposal.content.round));
-            }
+            ensure!(
+                new_round > pending.round,
+                ChainError::MultipleBlockProposals
+            );
         }
-        if let Some(Certificate { round, value, .. }) = &self.locked {
-            if let CertificateValue::ValidatedBlock {
-                executed_block: ExecutedBlock { block, .. },
-            } = value.inner()
-            {
-                ensure!(new_round > *round, ChainError::InsufficientRound(*round));
-                ensure!(
-                    *new_block == *block,
-                    ChainError::HasLockedBlock(block.height, *round)
-                );
-            }
+        if let Some((locked_block, locked_round)) = self.locked_block() {
+            let is_new_block =
+                |certificate: &Certificate| certificate.value().block() == Some(new_block);
+            ensure!(
+                *new_block == *locked_block || self.validated.values().any(is_new_block),
+                ChainError::HasLockedBlock(new_block.height, locked_round)
+            );
         }
         Ok(Outcome::Accept)
     }
 
+    /// Checks if the next round has timed out, and signs a `LeaderTimeout`
+    pub fn vote_leader_timeout(
+        &mut self,
+        chain_id: ChainId,
+        height: BlockHeight,
+        epoch: Epoch,
+        key_pair: Option<&KeyPair>,
+    ) -> bool {
+        if Timestamp::now() < self.round_timeout {
+            return false; // Round has not timed out yet.
+        }
+        let Some(key_pair) = key_pair else {
+            return false; // We are not a chain owner.
+        };
+        let next_round = self.next_round();
+        if let Some(leader_timeout) = &self.leader_timeout {
+            if leader_timeout.round >= next_round {
+                return false; // We already signed this timeout.
+            }
+        }
+        let value = CertificateValue::LeaderTimeout {
+            chain_id,
+            height,
+            epoch,
+        };
+        let vote = Vote::new(HashedValue::from(value), next_round, key_pair);
+        self.timeout_vote = Some(vote);
+        true
+    }
+
     pub fn check_validated_block(
-        &self,
-        new_block: &Block,
-        new_round: RoundNumber,
+        &mut self,
+        certificate: &Certificate,
     ) -> Result<Outcome, ChainError> {
+        let next_round = self.next_round();
+        let new_round = certificate.round;
         if let Some(Vote { value, round, .. }) = &self.pending {
             match value.inner() {
                 CertificateValue::ConfirmedBlock { executed_block } => {
-                    if executed_block.block == *new_block && *round == new_round {
+                    if Some(&executed_block.block) == certificate.value().block() {
                         return Ok(Outcome::Skip);
                     }
                 }
@@ -116,18 +171,21 @@ impl MultiOwnerFtManager {
                     new_round >= *round,
                     ChainError::InsufficientRound(round.try_sub_one().unwrap())
                 ),
-                value => {
-                    let msg = format!("Unexpected value: {:?}", value);
-                    return Err(ChainError::InternalError(msg));
-                }
+                CertificateValue::LeaderTimeout { .. } => unreachable!(),
             }
         }
-        if let Some(Certificate { round, .. }) = &self.locked {
+        if let Some((_, locked_round)) = self.locked_block() {
             ensure!(
-                new_round >= *round,
-                ChainError::InsufficientRound(round.try_sub_one().unwrap())
+                new_round >= locked_round,
+                ChainError::InsufficientRound(locked_round)
             );
         }
+        self.update_timeout(new_round);
+        self.validated.insert(new_round, certificate.clone());
+        ensure!(
+            new_round == next_round,
+            ChainError::InsufficientRound(next_round)
+        );
         Ok(Outcome::Accept)
     }
 
@@ -138,8 +196,7 @@ impl MultiOwnerFtManager {
         state_hash: CryptoHash,
         key_pair: Option<&KeyPair>,
     ) {
-        // Record the proposed block. This is important to keep track of rounds
-        // for non-voting nodes.
+        // Record the proposed block, so it can be supplied to clients that request it.
         self.proposed = Some(proposal.clone());
         if let Some(key_pair) = key_pair {
             // Vote to validate.
@@ -155,22 +212,46 @@ impl MultiOwnerFtManager {
     }
 
     pub fn create_final_vote(&mut self, certificate: Certificate, key_pair: Option<&KeyPair>) {
-        // Record validity certificate. This is important to keep track of rounds
-        // for non-voting nodes.
         let Some(value) = certificate.value.clone().into_confirmed() else {
             error!("Unexpected value for final vote: {:?}", certificate.value());
             return;
         };
         let round = certificate.round;
+        self.validated = round
+            .try_add_one()
+            .map(|round| self.validated.split_off(&round))
+            .unwrap_or_default();
         self.locked = Some(certificate);
         if let Some(key_pair) = key_pair {
-            // Vote to confirm.
-            let vote = Vote::new(value, round, key_pair);
-            // Ok to overwrite validation votes with confirmation votes at equal or higher round.
-            self.pending = Some(vote);
+            // Vote to confirm. This is in the current round, so we can overwrite `pending`.
+            self.pending = Some(Vote::new(value, round, key_pair));
         }
     }
 
+    /// Resets the timer if `round` has just ended.
+    fn update_timeout(&mut self, round: RoundNumber) {
+        if self.next_round() <= round {
+            let factor = round.0.saturating_add(2);
+            let timeout = TIMEOUT.saturating_mul(u32::try_from(factor).unwrap_or(u32::MAX));
+            self.round_timeout = Timestamp::now().saturating_add(timeout);
+        }
+    }
+
+    /// Updates the round number and timer if the timeout certificate is from a higher round than
+    /// any known certificate.
+    pub fn handle_timeout_certificate(&mut self, certificate: Certificate) {
+        let round = certificate.round;
+        if let Some(known_certificate) = &self.leader_timeout {
+            if known_certificate.round >= round {
+                return;
+            }
+        }
+        self.update_timeout(round);
+        self.leader_timeout = Some(certificate);
+    }
+
+    /// Returns the public key of the block proposal's signer, if they are a valid owner and allowed
+    /// to propose a block in the proposal's round.
     pub fn verify_owner(&self, proposal: &BlockProposal) -> Option<PublicKey> {
         let round = proposal.content.round.0;
         let height = proposal.content.block.height.0;
@@ -179,6 +260,13 @@ impl MultiOwnerFtManager {
         let index = self.distribution.sample(&mut rng);
         let (owner, (key, _)) = self.owners.iter().nth(index)?;
         (*owner == proposal.owner).then_some(*key)
+    }
+
+    /// Returns the highest block we voted to confirm (or would have, if we are not a validator).
+    fn locked_block(&self) -> Option<(&Block, RoundNumber)> {
+        let locked = self.locked.as_ref()?;
+        let block = &locked.value().executed_block()?.block;
+        Some((block, locked.round))
     }
 }
 
@@ -195,10 +283,12 @@ pub struct MultiOwnerFtManagerInfo {
     pub requested_locked: Option<Certificate>,
     /// Latest vote we cast (either to validate or to confirm a block).
     pub pending: Option<LiteVote>,
+    /// Latest timeout vote we cast.
+    pub timeout_vote: Option<Vote>,
     /// The value we voted for, if requested.
     pub requested_pending_value: Option<HashedValue>,
     /// The current round.
-    pub round: RoundNumber,
+    pub next_round: RoundNumber,
 }
 
 impl From<&MultiOwnerFtManager> for MultiOwnerFtManagerInfo {
@@ -208,8 +298,9 @@ impl From<&MultiOwnerFtManager> for MultiOwnerFtManagerInfo {
             requested_proposed: None,
             requested_locked: None,
             pending: manager.pending.as_ref().map(|vote| vote.lite()),
+            timeout_vote: manager.timeout_vote.clone(),
             requested_pending_value: None,
-            round: manager.round(),
+            next_round: manager.next_round(),
         }
     }
 }
@@ -222,6 +313,6 @@ impl MultiOwnerFtManagerInfo {
     }
 
     pub fn next_round(&self) -> RoundNumber {
-        self.round.try_add_one().unwrap_or(self.round)
+        self.next_round
     }
 }
