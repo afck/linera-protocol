@@ -160,6 +160,14 @@ impl MultiOwnerFtManager {
     ) -> Result<Outcome, ChainError> {
         let next_round = self.next_round();
         let new_round = certificate.round;
+        if let Some((_, locked_round)) = self.locked_block() {
+            ensure!(
+                new_round >= locked_round,
+                ChainError::InsufficientRound(locked_round)
+            );
+        }
+        self.update_timeout(new_round);
+        self.validated.insert(new_round, certificate.clone());
         if let Some(Vote { value, round, .. }) = &self.pending {
             match value.inner() {
                 CertificateValue::ConfirmedBlock { executed_block } => {
@@ -174,14 +182,6 @@ impl MultiOwnerFtManager {
                 CertificateValue::LeaderTimeout { .. } => unreachable!(),
             }
         }
-        if let Some((_, locked_round)) = self.locked_block() {
-            ensure!(
-                new_round >= locked_round,
-                ChainError::InsufficientRound(locked_round)
-            );
-        }
-        self.update_timeout(new_round);
-        self.validated.insert(new_round, certificate.clone());
         ensure!(
             new_round == next_round,
             ChainError::InsufficientRound(next_round)

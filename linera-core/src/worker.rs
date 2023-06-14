@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use futures::{future, FutureExt};
 use linera_base::{
     crypto::{CryptoHash, KeyPair},
-    data_types::{ArithmeticError, BlockHeight, Timestamp},
+    data_types::{ArithmeticError, BlockHeight, RoundNumber, Timestamp},
     doc_scalar, ensure,
     identifiers::{ChainId, Owner},
 };
@@ -117,8 +117,17 @@ doc_scalar!(
 #[allow(clippy::large_enum_variant)]
 /// Reason for the notification.
 pub enum Reason {
-    NewBlock { height: BlockHeight },
-    NewIncomingMessage { origin: Origin, height: BlockHeight },
+    NewBlock {
+        height: BlockHeight,
+    },
+    NewIncomingMessage {
+        origin: Origin,
+        height: BlockHeight,
+    },
+    NewRound {
+        height: BlockHeight,
+        round: RoundNumber,
+    },
 }
 
 /// Error type for [`ValidatorWorker`].
@@ -607,7 +616,7 @@ where
     async fn process_validated_block(
         &mut self,
         certificate: Certificate,
-    ) -> Result<ChainInfoResponse, WorkerError> {
+    ) -> Result<(ChainInfoResponse, NetworkActions), WorkerError> {
         let block = match certificate.value() {
             CertificateValue::ValidatedBlock {
                 executed_block: ExecutedBlock { block, .. },
@@ -630,6 +639,8 @@ where
             }
         );
         certificate.check(committee)?;
+        let mut actions = NetworkActions::default();
+        let next_round = chain.manager.get().next_round();
         if chain
             .tip_state
             .get()
@@ -642,7 +653,16 @@ where
         {
             chain.save().await?;
             // If we just processed the same pending block, return the chain info unchanged.
-            return Ok(ChainInfoResponse::new(&chain, self.key_pair()));
+            if chain.manager.get().next_round() > next_round {
+                actions.notifications.push(Notification {
+                    chain_id: block.chain_id,
+                    reason: Reason::NewRound {
+                        height: block.height,
+                        round: chain.manager.get().next_round(),
+                    },
+                })
+            }
+            return Ok((ChainInfoResponse::new(&chain, self.key_pair()), actions));
         }
         chain
             .manager
@@ -650,19 +670,28 @@ where
             .create_final_vote(certificate.clone(), self.key_pair());
         let info = ChainInfoResponse::new(&chain, self.key_pair());
         chain.save().await?;
+        if chain.manager.get().next_round() > next_round {
+            actions.notifications.push(Notification {
+                chain_id: block.chain_id,
+                reason: Reason::NewRound {
+                    height: block.height,
+                    round: chain.manager.get().next_round(),
+                },
+            })
+        }
         if self.cache_recent_value(&certificate.value).await {
             if let Some(value) = certificate.value.into_confirmed() {
                 self.cache_recent_value(&value).await;
             }
         }
-        Ok(info)
+        Ok((info, actions))
     }
 
     /// Processes a leader timeout issued from a multi-owner chain.
     async fn process_leader_timeout(
         &mut self,
         certificate: Certificate,
-    ) -> Result<ChainInfoResponse, WorkerError> {
+    ) -> Result<(ChainInfoResponse, NetworkActions), WorkerError> {
         let (chain_id, height, epoch) = match certificate.value() {
             CertificateValue::LeaderTimeout {
                 chain_id,
@@ -685,16 +714,27 @@ where
             WorkerError::InvalidEpoch { chain_id, epoch }
         );
         certificate.check(committee)?;
+        let mut actions = NetworkActions::default();
         if chain.tip_state.get().already_validated_block(height)? {
-            return Ok(ChainInfoResponse::new(&chain, self.key_pair()));
+            return Ok((ChainInfoResponse::new(&chain, self.key_pair()), actions));
         }
+        let next_round = chain.manager.get().next_round();
         chain
             .manager
             .get_mut()
             .handle_timeout_certificate(certificate.clone());
+        if chain.manager.get().next_round() > next_round {
+            actions.notifications.push(Notification {
+                chain_id,
+                reason: Reason::NewRound {
+                    height,
+                    round: chain.manager.get().next_round(),
+                },
+            })
+        }
         let info = ChainInfoResponse::new(&chain, self.key_pair());
         chain.save().await?;
-        Ok(info)
+        Ok((info, actions))
     }
 
     async fn process_cross_chain_update(
@@ -988,8 +1028,7 @@ where
         let (info, actions) = match certificate.value() {
             CertificateValue::ValidatedBlock { .. } => {
                 // Confirm the validated block.
-                let info = self.process_validated_block(certificate).await?;
-                (info, NetworkActions::default())
+                self.process_validated_block(certificate).await?
             }
             CertificateValue::ConfirmedBlock { .. } => {
                 // Execute the confirmed block.
@@ -1002,8 +1041,7 @@ where
             }
             CertificateValue::LeaderTimeout { .. } => {
                 // Handle the leader timeout.
-                let info = self.process_leader_timeout(certificate).await?;
-                (info, NetworkActions::default())
+                self.process_leader_timeout(certificate).await?
             }
         };
         Ok((info, actions))

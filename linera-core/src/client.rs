@@ -461,6 +461,33 @@ where
                     }
                 }
             }
+            Reason::NewRound { height, round } => {
+                let chain_id = notification.chain_id;
+                if Self::get_local_next_block_height(this.clone(), chain_id, &mut local_node).await
+                    > Some(height)
+                {
+                    debug!("Accepting redundant notification for new round");
+                    return true;
+                }
+                if let Err(error) = local_node
+                    .try_synchronize_chain_state_from(name, node, chain_id)
+                    .await
+                {
+                    error!("Fail to process notification: {error}");
+                    return false;
+                }
+                let mut guard = this.lock().await;
+                let Ok(info) = local_node.local_chain_info(chain_id).await else {
+                    error!("Fail to read local chain info for {chain_id}");
+                    return false;
+                };
+                // Useful in case `chain_id` is the same as the local chain.
+                guard.update_from_info(&info);
+                if info.next_block_height < height || info.manager.next_round() < round {
+                    error!("Fail to synchronize new block after notification");
+                    return false;
+                }
+            }
         }
         // Accept the notification.
         true
