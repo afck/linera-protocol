@@ -32,6 +32,8 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 pub struct MultiOwnerFtManager {
     /// The co-owners of the chain, with their weights.
     pub owners: BTreeMap<Owner, (PublicKey, u128)>,
+    /// The seed for the pseudo-random number generator that determines the round leaders.
+    pub seed: u64,
     /// The probability distribution for choosing a round leader.
     pub distribution: WeightedAliasIndex<u128>,
     /// Latest authenticated block that we have received.
@@ -54,6 +56,7 @@ pub struct MultiOwnerFtManager {
 impl MultiOwnerFtManager {
     pub fn new(
         owners: impl IntoIterator<Item = (Owner, (PublicKey, u128))>,
+        seed: u64,
     ) -> Result<Self, ChainError> {
         let owners: BTreeMap<Owner, (PublicKey, u128)> = owners.into_iter().collect();
         let weights = owners.values().map(|(_, weight)| *weight).collect();
@@ -62,6 +65,7 @@ impl MultiOwnerFtManager {
 
         Ok(MultiOwnerFtManager {
             owners,
+            seed,
             distribution,
             proposed: None,
             locked: None,
@@ -254,12 +258,20 @@ impl MultiOwnerFtManager {
     /// to propose a block in the proposal's round.
     pub fn verify_owner(&self, proposal: &BlockProposal) -> Option<PublicKey> {
         let round = proposal.content.round.0;
-        let height = proposal.content.block.height.0;
-        let seed = round.rotate_left(32).wrapping_add(height);
+        let seed = round.rotate_left(32).wrapping_add(self.seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let index = self.distribution.sample(&mut rng);
         let (owner, (key, _)) = self.owners.iter().nth(index)?;
         (*owner == proposal.owner).then_some(*key)
+    }
+
+    /// The leader who is allowed to propose a block in the given round.
+    fn round_leader(&self, round: RoundNumber) -> &Owner {
+        let seed = round.0.rotate_left(32).wrapping_add(self.seed);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let index = self.distribution.sample(&mut rng);
+        let maybe_owner = self.owners.keys().nth(index);
+        maybe_owner.expect("The distribution returns only indices of existing owners")
     }
 
     /// Returns the highest block we voted to confirm (or would have, if we are not a validator).
@@ -279,28 +291,38 @@ pub struct MultiOwnerFtManagerInfo {
     pub owners: HashMap<Owner, (PublicKey, u128)>,
     /// Latest authenticated block that we have received, if requested.
     pub requested_proposed: Option<BlockProposal>,
-    /// Latest validated proposal that we have seen (and voted to confirm), if requested.
-    pub requested_locked: Option<Certificate>,
+    /// Latest validated proposal that we have seen, if requested.
+    pub requested_validated: Option<Certificate>,
+    /// Latest timeout certificate we have seen.
+    pub leader_timeout: Option<Certificate>,
     /// Latest vote we cast (either to validate or to confirm a block).
     pub pending: Option<LiteVote>,
     /// Latest timeout vote we cast.
     pub timeout_vote: Option<Vote>,
     /// The value we voted for, if requested.
     pub requested_pending_value: Option<HashedValue>,
-    /// The current round.
+    /// The current round, i.e. the round number for the next block proposal.
     pub next_round: RoundNumber,
+    /// The current leader, who is allowed to propose the next block.
+    pub leader: Owner,
+    /// The timestamp when the current round times out.
+    pub round_timeout: Timestamp,
 }
 
 impl From<&MultiOwnerFtManager> for MultiOwnerFtManagerInfo {
     fn from(manager: &MultiOwnerFtManager) -> Self {
+        let next_round = manager.next_round();
         MultiOwnerFtManagerInfo {
             owners: manager.owners.clone().into_iter().collect(),
             requested_proposed: None,
-            requested_locked: None,
+            requested_validated: None,
+            leader_timeout: manager.leader_timeout.clone(),
             pending: manager.pending.as_ref().map(|vote| vote.lite()),
             timeout_vote: manager.timeout_vote.clone(),
             requested_pending_value: None,
-            next_round: manager.next_round(),
+            next_round,
+            leader: *manager.round_leader(next_round),
+            round_timeout: manager.round_timeout,
         }
     }
 }
@@ -308,7 +330,11 @@ impl From<&MultiOwnerFtManager> for MultiOwnerFtManagerInfo {
 impl MultiOwnerFtManagerInfo {
     pub fn add_values(&mut self, manager: &MultiOwnerFtManager) {
         self.requested_proposed = manager.proposed.clone();
-        self.requested_locked = manager.locked.clone();
+        self.requested_validated = manager
+            .validated
+            .last_key_value()
+            .map(|(_, cert)| cert.clone())
+            .or_else(|| manager.locked.clone());
         self.requested_pending_value = manager.pending.as_ref().map(|vote| vote.value.clone());
     }
 

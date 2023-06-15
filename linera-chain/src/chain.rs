@@ -374,7 +374,7 @@ where
             // Last, reset the consensus state based on the current ownership.
             self.manager
                 .get_mut()
-                .reset(self.execution_state.system.ownership.get())?;
+                .reset(self.execution_state.system.ownership.get(), BlockHeight(0))?;
         }
         Ok(())
     }
@@ -503,9 +503,10 @@ where
         let state_hash = self.execution_state.crypto_hash().await?;
         self.execution_state_hash.set(Some(state_hash));
         // Last, reset the consensus state based on the current ownership.
-        self.manager
-            .get_mut()
-            .reset(self.execution_state.system.ownership.get())?;
+        self.manager.get_mut().reset(
+            self.execution_state.system.ownership.get(),
+            block.height.try_add_one()?,
+        )?;
         Ok((messages, state_hash))
     }
 

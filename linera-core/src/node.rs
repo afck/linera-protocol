@@ -652,23 +652,52 @@ where
         {
             return Ok(());
         };
-        if let ChainManagerInfo::Multi(manager) = info.manager {
-            if let Some(proposal) = manager.requested_proposed {
-                if proposal.content.block.chain_id == chain_id {
-                    let owner = proposal.owner;
-                    if let Err(error) = self.handle_block_proposal(proposal).await {
-                        tracing::warn!("Skipping proposal from {}: {}", owner, error);
+        match info.manager {
+            ChainManagerInfo::Multi(manager) => {
+                if let Some(proposal) = manager.requested_proposed {
+                    if proposal.content.block.chain_id == chain_id {
+                        let owner = proposal.owner;
+                        if let Err(error) = self.handle_block_proposal(proposal).await {
+                            tracing::warn!("Skipping proposal from {}: {}", owner, error);
+                        }
+                    }
+                }
+                if let Some(cert) = manager.requested_locked {
+                    if cert.value().is_validated() && cert.value().chain_id() == chain_id {
+                        let hash = cert.hash();
+                        if let Err(error) = self.handle_certificate(cert, vec![]).await {
+                            tracing::warn!("Skipping certificate {}: {}", hash, error);
+                        }
                     }
                 }
             }
-            if let Some(cert) = manager.requested_locked {
-                if cert.value().is_validated() && cert.value().chain_id() == chain_id {
-                    let hash = cert.hash();
-                    if let Err(error) = self.handle_certificate(cert, vec![]).await {
-                        tracing::warn!("Skipping certificate {}: {}", hash, error);
+            ChainManagerInfo::MultiFt(manager) => {
+                if let Some(proposal) = manager.requested_proposed {
+                    if proposal.content.block.chain_id == chain_id {
+                        let owner = proposal.owner;
+                        if let Err(error) = self.handle_block_proposal(proposal).await {
+                            tracing::warn!("Skipping proposal from {}: {}", owner, error);
+                        }
+                    }
+                }
+                if let Some(cert) = manager.requested_validated {
+                    if cert.value().is_validated() && cert.value().chain_id() == chain_id {
+                        let hash = cert.hash();
+                        if let Err(error) = self.handle_certificate(cert, vec![]).await {
+                            tracing::warn!("Skipping certificate {}: {}", hash, error);
+                        }
+                    }
+                }
+                if let Some(cert) = manager.leader_timeout {
+                    if cert.value().is_timeout() && cert.value().chain_id() == chain_id {
+                        let hash = cert.hash();
+                        if let Err(error) = self.handle_certificate(cert, vec![]).await {
+                            tracing::warn!("Skipping certificate {}: {}", hash, error);
+                        }
                     }
                 }
             }
+            ChainManagerInfo::Single(_) | ChainManagerInfo::None => {}
         }
         Ok(())
     }

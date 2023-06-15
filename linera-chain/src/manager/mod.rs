@@ -50,7 +50,11 @@ pub enum Outcome {
 }
 
 impl ChainManager {
-    pub fn reset(&mut self, ownership: &ChainOwnership) -> Result<(), ChainError> {
+    pub fn reset(
+        &mut self,
+        ownership: &ChainOwnership,
+        height: BlockHeight,
+    ) -> Result<(), ChainError> {
         match ownership {
             ChainOwnership::None => {
                 *self = ChainManager::None;
@@ -63,7 +67,10 @@ impl ChainManager {
                 *self = ChainManager::Multi(Box::new(MultiOwnerManager::new(owners.clone())));
             }
             ChainOwnership::MultiFt { owners } => {
-                *self = ChainManager::MultiFt(Box::new(MultiOwnerFtManager::new(owners.clone())?));
+                *self = ChainManager::MultiFt(Box::new(MultiOwnerFtManager::new(
+                    owners.clone(),
+                    height.0,
+                )?));
             }
         }
         Ok(())

@@ -71,6 +71,8 @@ pub struct ChainClient<ValidatorNodeProvider, StorageClient> {
     next_block_height: BlockHeight,
     /// Round number that we plan to use for the next block.
     next_round: RoundNumber,
+    /// If this is a fault-tolerant multi-owner chain, the current round leader and timeout.
+    ft_round: Option<(Owner, Timestamp)>,
     /// Pending block.
     pending_block: Option<Block>,
     /// Known key pairs from present and past identities.
@@ -143,6 +145,7 @@ impl<P, S> ChainClient<P, S> {
             timestamp,
             next_block_height,
             next_round: RoundNumber::default(),
+            ft_round: None,
             pending_block: None,
             known_key_pairs,
             admin_id,
@@ -204,7 +207,7 @@ where
     }
 
     /// Obtains the basic `ChainInfo` data for the local chain.
-    async fn chain_info(&mut self) -> Result<ChainInfo, NodeError> {
+    pub async fn chain_info(&mut self) -> Result<ChainInfo, NodeError> {
         let query = ChainInfoQuery::new(self.chain_id);
         let response = self.node_client.handle_chain_info_query(query).await?;
         Ok(response.info)
@@ -1000,6 +1003,11 @@ where
             self.next_block_height = info.next_block_height;
             self.next_round = info.manager.next_round();
             self.timestamp = info.timestamp;
+            self.ft_round = if let ChainManagerInfo::MultiFt(manager_info) = &info.manager {
+                Some((manager_info.leader, manager_info.round_timeout))
+            } else {
+                None
+            };
         }
     }
 
@@ -1488,6 +1496,35 @@ where
             certificates.push(certificate);
         }
         Ok(certificates)
+    }
+
+    /// Creates an empty block to process all incoming messages, if we are allowed to propose.
+    /// If there are too many messages for one block, the others remain in the inbox.
+    pub async fn try_process_inbox(&mut self) -> Result<Option<Certificate>> {
+        // TODO(multi_ft): This requests chain info twice. Deduplicate?
+        self.prepare_chain().await?;
+        let identity = self.identity().await?;
+        if self.ft_round.map_or(false, |(owner, _)| owner != identity) {
+            return Ok(None); // Not owner or round leader.
+        }
+        // If blocks are already locked, propose the highest one.
+        let query = ChainInfoQuery::new(self.chain_id).with_manager_values();
+        let info = self.node_client.handle_chain_info_query(query).await?.info;
+        if let ChainManagerInfo::MultiFt(manager) = info.manager {
+            if let Some(cert) = manager.requested_validated {
+                if let Some(block) = cert.value().block() {
+                    return Ok(Some(self.propose_block(block.clone()).await?));
+                }
+            }
+        }
+        let incoming_messages = self.pending_messages().await?;
+        if incoming_messages.is_empty() {
+            // TODO(multi_ft): This blocks the chain for a while. Add a way to unblock your round,
+            //     or make everyone leader in the first round.
+            return Ok(None); // Nothing to propose.
+        }
+        let certificate = self.execute_block(incoming_messages, vec![]).await?;
+        Ok(Some(certificate))
     }
 
     /// Starts listening to the admin chain for new committees. (This is only useful for

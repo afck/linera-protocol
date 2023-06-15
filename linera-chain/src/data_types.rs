@@ -475,6 +475,10 @@ impl CertificateValue {
         matches!(self, CertificateValue::ValidatedBlock { .. })
     }
 
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, CertificateValue::LeaderTimeout { .. })
+    }
+
     #[cfg(any(test, feature = "test"))]
     pub fn messages(&self) -> Option<&Vec<OutgoingMessage>> {
         Some(&self.executed_block()?.messages)
