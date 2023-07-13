@@ -1155,6 +1155,14 @@ async fn test_end_to_end_applications_query() {
     runner.generate_initial_validator_config().await;
     client.create_genesis_config().await;
 
+    let chain_id = {
+        let wallet = client.get_wallet();
+        match wallet.default_chain() {
+            None => panic!("no default chain ID in wallet"),
+            Some(chain_id) => chain_id,
+        }
+    };
+
     runner.run_local_net().await;
     let mut node_service = client.run_node_service(None).await;
 
@@ -1163,7 +1171,7 @@ async fn test_end_to_end_applications_query() {
     let query = make_graphql_query(
         "../linera-explorer/graphql/applications.graphql",
         "Applications",
-        &Vec::new(),
+        &[("chainId".to_string(), chain_id.to_string())],
     );
     check_request(query, good_result, node_service.port).await;
     node_service.assert_is_running();
@@ -1180,6 +1188,14 @@ async fn test_end_to_end_blocks_query() {
     runner.generate_initial_validator_config().await;
     client.create_genesis_config().await;
 
+    let chain_id = {
+        let wallet = client.get_wallet();
+        match wallet.default_chain() {
+            None => panic!("no default chain ID in wallet"),
+            Some(chain_id) => chain_id,
+        }
+    };
+
     runner.run_local_net().await;
     let mut node_service = client.run_node_service(None).await;
 
@@ -1188,7 +1204,7 @@ async fn test_end_to_end_blocks_query() {
     let query = make_graphql_query(
         "../linera-explorer/graphql/blocks.graphql",
         "Blocks",
-        &Vec::new(),
+        &[("chainId".to_string(), chain_id.to_string())],
     );
     check_request(query, good_result, node_service.port).await;
     node_service.assert_is_running();
@@ -1205,6 +1221,14 @@ async fn test_end_to_end_block_query() {
     runner.generate_initial_validator_config().await;
     client.create_genesis_config().await;
 
+    let chain_id = {
+        let wallet = client.get_wallet();
+        match wallet.default_chain() {
+            None => panic!("no default chain ID in wallet"),
+            Some(chain_id) => chain_id,
+        }
+    };
+
     runner.run_local_net().await;
     let mut node_service = client.run_node_service(None).await;
 
@@ -1213,7 +1237,7 @@ async fn test_end_to_end_block_query() {
     let query = make_graphql_query(
         "../linera-explorer/graphql/block.graphql",
         "Block",
-        &Vec::new(),
+        &[("chainId".to_string(), chain_id.to_string())],
     );
     check_request(query, good_result, node_service.port).await;
     node_service.assert_is_running();
