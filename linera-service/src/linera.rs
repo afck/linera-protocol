@@ -6,7 +6,7 @@ use anyhow::{anyhow, bail, Context, Error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use colored::Colorize;
-use futures::{lock::Mutex, StreamExt};
+use futures::StreamExt;
 use linera_base::{
     crypto::{KeyPair, PublicKey},
     data_types::{Amount, BlockHeight, Timestamp},
@@ -30,7 +30,7 @@ use linera_rpc::node_provider::{NodeOptions, NodeProvider};
 use linera_service::{
     chain_listener::{self, ChainListenerConfig},
     config::{CommitteeConfig, Export, GenesisConfig, Import, UserChain, WalletState},
-    node_service::{Chains, NodeService},
+    node_service::NodeService,
     project::{self, Project},
     storage::{Runnable, StorageConfig},
 };
@@ -45,6 +45,7 @@ use std::{
     time::{Duration, Instant},
 };
 use structopt::StructOpt;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 #[cfg(feature = "benchmark")]
@@ -1319,7 +1320,7 @@ where
                 info!("Watching for notifications for chain {:?}", chain_id);
                 let mut tracker = NotificationTracker::default();
                 let mut notification_stream =
-                    ChainClient::listen(Arc::new(Mutex::new(chain_client))).await?;
+                    ChainClient::listen(Arc::new(RwLock::new(chain_client))).await?;
                 while let Some(notification) = notification_stream.next().await {
                     if raw || tracker.insert(notification.clone()) {
                         println!("{:?}", notification);
@@ -1330,10 +1331,8 @@ where
             }
 
             Service { config, port } => {
-                let default = context.wallet_state.default_chain();
-                let list = context.wallet_state.chain_ids();
-                let chains = Chains { list, default };
-                NodeService::new(config, port, chains, storage)
+                let default_chain = context.wallet_state.default_chain();
+                NodeService::new(config, port, default_chain, storage)
                     .run(context)
                     .await?;
             }

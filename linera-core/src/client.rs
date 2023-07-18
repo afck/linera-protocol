@@ -11,7 +11,6 @@ use crate::{
 use anyhow::{anyhow, bail, ensure, Result};
 use futures::{
     future,
-    lock::Mutex,
     stream::{self, FuturesUnordered, StreamExt},
 };
 use linera_base::{
@@ -41,6 +40,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tokio::sync::RwLock;
 use tokio_stream::Stream;
 use tracing::{debug, error, info};
 
@@ -369,11 +369,11 @@ where
     }
 
     async fn get_local_next_block_height(
-        this: Arc<Mutex<Self>>,
+        this: Arc<RwLock<Self>>,
         chain_id: ChainId,
         local_node: &mut LocalNodeClient<S>,
     ) -> Option<BlockHeight> {
-        let mut guard = this.lock().await;
+        let mut guard = this.write().await;
         let Ok(info) = local_node.local_chain_info(chain_id).await else {
             error!("Fail to read local chain info for {chain_id}");
             return None;
@@ -384,7 +384,7 @@ where
     }
 
     async fn process_notification<A>(
-        this: Arc<Mutex<Self>>,
+        this: Arc<RwLock<Self>>,
         name: ValidatorName,
         node: A,
         mut local_node: LocalNodeClient<S>,
@@ -447,7 +447,7 @@ where
     }
 
     /// Listens to notifications about the current chain from all validators.
-    pub async fn listen(this: Arc<Mutex<Self>>) -> Result<NotificationStream>
+    pub async fn listen(this: Arc<RwLock<Self>>) -> Result<NotificationStream>
     where
         P: Send + 'static,
     {
@@ -472,14 +472,14 @@ where
     }
 
     async fn update_streams(
-        this: &Arc<Mutex<Self>>,
+        this: &Arc<RwLock<Self>>,
         streams: &mut HashMap<ValidatorName, Pin<Box<dyn Stream<Item = Notification> + Send>>>,
     ) -> Result<(), NodeError>
     where
         P: Send + 'static,
     {
         let (chain_id, nodes, local_node) = {
-            let mut guard = this.lock().await;
+            let mut guard = this.write().await;
             let committee = guard.local_committee().await?;
             let nodes: HashMap<_, _> = guard.validator_node_provider.make_nodes(&committee)?;
             (guard.chain_id, nodes, guard.node_client.clone())
@@ -856,7 +856,7 @@ where
     /// This is similar to `find_received_certificates` but for only one validator.
     /// We also don't try to synchronize the admin chain.
     pub async fn find_received_certificates_from_validator<A>(
-        this: Arc<Mutex<Self>>,
+        this: Arc<RwLock<Self>>,
         name: ValidatorName,
         client: A,
     ) -> Result<(), NodeError>
@@ -864,7 +864,7 @@ where
         A: ValidatorNode + Send + Sync + 'static + Clone,
     {
         let ((committees, max_epoch), chain_id, current_tracker) = {
-            let mut guard = this.lock().await;
+            let mut guard = this.write().await;
             (
                 guard.known_committees().await?,
                 guard.chain_id(),
@@ -883,7 +883,7 @@ where
         .await?;
         // Process received certificates. If the client state has changed during the
         // network calls, we should still be fine.
-        this.lock()
+        this.write()
             .await
             .receive_certificates_from_validator(name, tracker, certificates)
             .await;
@@ -1115,7 +1115,7 @@ where
     }
 
     /// Queries an application.
-    pub async fn query_application(&mut self, query: &Query) -> Result<Response> {
+    pub async fn query_application(&self, query: &Query) -> Result<Response> {
         let response = self
             .node_client
             .query_application(self.chain_id, query)

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
-use futures::{future, lock::Mutex, StreamExt};
+use futures::{future, StreamExt};
 use linera_base::{crypto::KeyPair, data_types::Timestamp, identifiers::ChainId};
 use linera_core::{
     client::{ChainClient, ValidatorNodeProvider},
@@ -13,13 +13,14 @@ use linera_storage::Store;
 use linera_views::views::ViewError;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use structopt::StructOpt;
+use tokio::sync::RwLock;
 use tokio_stream::Stream;
 use tracing::{info, warn};
 
 use crate::{config::WalletState, node_service::ClientMap};
 
 type ClientNotificationStream<P, S> =
-    Box<dyn Stream<Item = (Notification, Arc<Mutex<ChainClient<P, S>>>)> + Send + Unpin>;
+    Box<dyn Stream<Item = (Notification, Arc<RwLock<ChainClient<P, S>>>)> + Send + Unpin>;
 
 #[derive(Debug, Clone, StructOpt)]
 pub struct ChainListenerConfig {
@@ -97,7 +98,7 @@ where
                     }
                 }
             }
-            context.update_wallet(&mut *client.lock().await).await;
+            context.update_wallet(&mut *client.write().await).await;
             self.update_streams(&mut streams, &mut context, &storage)
                 .await?;
         }
@@ -138,11 +139,11 @@ where
         C: ClientContext<P>,
     {
         let new_clients: Vec<_> = {
-            let mut map_guard = self.clients.map_lock().await;
+            let mut map_guard = self.clients.write_map().await;
             for chain_id in context.wallet_state().own_chain_ids() {
                 map_guard.entry(chain_id).or_insert_with(|| {
                     let client = context.make_chain_client(storage.clone(), chain_id);
-                    Arc::new(Mutex::new(client))
+                    Arc::new(RwLock::new(client))
                 });
             }
             map_guard
@@ -158,7 +159,7 @@ where
                 {
                     // Process the inbox: For messages that are already there we won't receive a
                     // notification.
-                    let mut guard = client.lock().await;
+                    let mut guard = client.write().await;
                     guard.synchronize_from_validators().await?;
                     guard.process_inbox().await?;
                 }
@@ -174,7 +175,7 @@ where
                                 tokio::time::sleep(Duration::from_millis(delay_before_ms)).await;
                             }
                             {
-                                let mut client = client.lock().await;
+                                let mut client = client.write().await;
                                 Self::handle_notification(&mut *client, notification.clone()).await;
                             }
                             if delay_after_ms > 0 {
