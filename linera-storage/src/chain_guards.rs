@@ -50,11 +50,15 @@ impl ChainGuards {
     /// the same chain.
     pub async fn guard(&self, chain_id: ChainId) -> ChainGuard {
         let guard = self.get_or_create_lock(chain_id);
-        ChainGuard {
+        let guards = self.guards.clone();
+        tracing::warn!("Acquiring lock on {:?}", chain_id);
+        let guard = ChainGuard {
             chain_id,
-            guards: self.guards.clone(),
+            guards,
             guard: Some(guard.lock_owned().await),
-        }
+        };
+        tracing::warn!("Acquired lock on {:?}", chain_id);
+        guard
     }
 
     /// Obtains the lock used for guarding a chain.
@@ -116,7 +120,7 @@ pub struct ChainGuard {
 impl Drop for ChainGuard {
     /// Releases the lock and removes the entry from the map if possible.
     ///
-    /// Before the releasing the lock, a weak reference to the lock is obtained. After releasing
+    /// Before releasing the lock, a weak reference to the lock is obtained. After releasing
     /// the lock, an attempt is made to upgrade the weak reference to a strong reference. If that
     /// succeeds, it indicates that there's a [`ChainGuards`] instance waiting to obtain the lock,
     /// so the entry in the [`ChainGuardMap`] is not removed.
@@ -131,6 +135,7 @@ impl Drop for ChainGuard {
     /// 3. The mutex is only locked in [`ChainGuards::guard`], which does not hold any locks to the
     ///    map.
     fn drop(&mut self) {
+        tracing::warn!("Dropping lock on {:?}", self.chain_id);
         self.guards.remove_if(&self.chain_id, |_, _| {
             let mutex = Arc::downgrade(OwnedMutexGuard::mutex(
                 &self
@@ -140,6 +145,7 @@ impl Drop for ChainGuard {
             ));
             mutex.upgrade().is_none()
         });
+        tracing::warn!("Dropped lock on {:?}", self.chain_id);
     }
 }
 

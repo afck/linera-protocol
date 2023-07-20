@@ -982,7 +982,9 @@ where
         query: ChainInfoQuery,
     ) -> Result<(ChainInfoResponse, NetworkActions), WorkerError> {
         trace!("{} <-- {:?}", self.nickname, query);
+        tracing::warn!("LOADING CHAIN {}", query.chain_id);
         let mut chain = self.storage.load_chain(query.chain_id).await?;
+        tracing::warn!("LOADED CHAIN {}", query.chain_id);
         let mut info = ChainInfo::from(&chain);
         if query.request_committees {
             info.requested_committees = Some(chain.execution_state.system.committees.get().clone());
@@ -1038,6 +1040,7 @@ where
         trace!("{} --> {:?}", self.nickname, response);
         // Trigger any outgoing cross-chain messages that haven't been confirmed yet.
         let actions = self.create_network_actions(&mut chain).await?;
+        tracing::warn!("DROPPING CHAIN {}", query.chain_id);
         Ok((response, actions))
     }
 
