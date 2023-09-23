@@ -21,6 +21,7 @@ scylladb = ["linera-views/scylladb"]
 
 [dependencies]
 tempfile = { workspace = true }
+async-lock = { workspace = true }
 async-trait = { workspace = true }
 bcs = { workspace = true }
 dashmap = { workspace = true }
