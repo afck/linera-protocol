@@ -21,6 +21,7 @@ scylladb = ["linera-views/scylladb", "linera-core/scylladb", "linera-storage/scy
 
 [dependencies]
 anyhow = { workspace = true }
+async-lock = { workspace = true }
 async-graphql = { workspace = true }
 async-graphql-axum = { workspace = true }
 async-trait = { workspace = true }

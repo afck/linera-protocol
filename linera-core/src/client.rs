@@ -9,9 +9,9 @@ use crate::{
     updater::{communicate_with_quorum, CommunicateAction, CommunicationError, ValidatorUpdater},
     worker::{Notification, Reason, WorkerError, WorkerState},
 };
+use async_lock::Mutex;
 use futures::{
     future,
-    lock::Mutex,
     stream::{self, FuturesUnordered, StreamExt},
 };
 use linera_base::{
