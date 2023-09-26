@@ -75,7 +75,9 @@ impl<P, S> ChainClients<P, S> {
         &self,
         chain_id: &ChainId,
     ) -> Option<MutexGuardArc<ChainClient<P, S>>> {
-        Some(self.client(chain_id).await?.lock_arc().await)
+        let client = self.client(chain_id).await?;
+        let result = client.lock_arc().await;
+        Some(result)
     }
 
     pub(crate) async fn try_client_lock(
@@ -737,6 +739,21 @@ where
 
         info!("GraphiQL IDE: http://localhost:{}", port);
 
+        let clients = self.clients.clone();
+        let storage = self.storage.clone();
+        tokio::task::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                {
+                    println!("Chain client locks:");
+                    let clients_map = clients.0.lock().await;
+                    for (chain_id, client) in &*clients_map {
+                        println!("{}: {:?}", chain_id, client.location());
+                    }
+                    storage.print_chain_guards().await;
+                }
+            }
+        });
         ChainListener::new(self.config, self.clients.clone()).run(context, self.storage.clone());
         let serve_fut =
             Server::bind(&SocketAddr::from(([127, 0, 0, 1], port))).serve(app.into_make_service());

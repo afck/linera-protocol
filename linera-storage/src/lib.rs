@@ -105,6 +105,8 @@ pub trait Store: Sized {
     /// Writes a vector of certificates.
     async fn write_certificates(&self, certificate: &[Certificate]) -> Result<(), ViewError>;
 
+    async fn print_chain_guards(&self);
+
     /// Loads the view of a chain state and checks that it is active.
     async fn load_active_chain(
         &self,
@@ -246,7 +248,7 @@ pub trait Store: Sized {
 /// A store implemented from a [`KeyValueStoreClient`]
 pub struct DbStore<Client> {
     client: Client,
-    guards: ChainGuards,
+    pub(crate) guards: ChainGuards,
     user_applications: Arc<DashMap<UserApplicationId, UserApplicationCode>>,
     wasm_runtime: Option<WasmRuntime>,
 }
@@ -327,6 +329,16 @@ where
 
     fn current_time(&self) -> Timestamp {
         self.clock.current_time()
+    }
+
+    async fn print_chain_guards(&self) {
+        println!("Chain guard locks:");
+        for entry in self.client.guards.guards.iter() {
+            let (chain_id, guard) = entry.pair();
+            if let Some(guard) = guard.upgrade() {
+                println!("{}: {:?}", chain_id, guard.location());
+            }
+        }
     }
 
     async fn load_chain(

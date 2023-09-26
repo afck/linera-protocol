@@ -35,7 +35,7 @@ type ChainGuardMap = DashMap<ChainId, Weak<Mutex<()>>>;
 /// is always guaranteed to be the only live guard for that chain.
 #[derive(Clone, Debug, Default)]
 pub struct ChainGuards {
-    guards: Arc<ChainGuardMap>,
+    pub(crate) guards: Arc<ChainGuardMap>,
 }
 
 impl ChainGuards {
