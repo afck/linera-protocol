@@ -1,7 +1,6 @@
 // Copyright (c) Zefchain Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use aws_smithy_http::endpoint::Endpoint;
 use http::uri::InvalidUri;
 use std::env;
 use thiserror::Error;
@@ -12,9 +11,8 @@ pub const LOCALSTACK_ENDPOINT: &str = "LOCALSTACK_ENDPOINT";
 /// Gets the [`Endpoint`] to connect to a LocalStack instance.
 ///
 /// The endpoint must be configured through a [`LOCALSTACK_ENDPOINT`] environment variable.
-pub fn get_endpoint() -> Result<Endpoint, EndpointError> {
-    let endpoint_address = env::var(LOCALSTACK_ENDPOINT)?.parse()?;
-    Ok(Endpoint::immutable(endpoint_address))
+pub fn get_endpoint() -> Result<String, EndpointError> {
+    Ok(env::var(LOCALSTACK_ENDPOINT)?.to_string())
 }
 
 /// Failure to get the LocalStack endpoint.

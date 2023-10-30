@@ -14,13 +14,13 @@ use crate::{
 use async_lock::{Semaphore, SemaphoreGuard};
 use async_trait::async_trait;
 use aws_sdk_dynamodb::{
-    error::GetItemErrorKind,
-    model::{
-        AttributeDefinition, AttributeValue, Delete, KeySchemaElement, KeyType,
+    error::SdkError,
+    operation::{create_table::CreateTableError, get_item::GetItemError, query::QueryOutput},
+    primitives::Blob,
+    types::{
+        AttributeDefinition, AttributeValue, Delete, Endpoint, KeySchemaElement, KeyType,
         ProvisionedThroughput, Put, ScalarAttributeType, TransactWriteItem,
     },
-    output::QueryOutput,
-    types::{Blob, SdkError},
     Client,
 };
 use bcs::serialized_size;
@@ -35,7 +35,6 @@ use {
     crate::lru_caching::TEST_CACHE_SIZE,
     crate::test_utils::get_table_name,
     anyhow::{Context, Error},
-    aws_sdk_s3::Endpoint,
     aws_types::SdkConfig,
     std::env,
     tokio::sync::{Mutex, MutexGuard},
@@ -568,8 +567,8 @@ impl DynamoDbClientInternal {
             return Ok(true);
         };
         let test = match &error {
-            SdkError::ServiceError { err, raw: _ } => match &err.kind {
-                GetItemErrorKind::ResourceNotFoundException(inner_error) => {
+            SdkError::ServiceError(error) => match &error.err() {
+                GetItemError::ResourceNotFoundException(inner_error) => {
                     inner_error.message
                         == Some("Cannot do operations on a non-existent table".to_string())
                 }
@@ -1229,7 +1228,7 @@ pub async fn get_base_config() -> Result<Config, DynamoDbContextError> {
 pub async fn get_localstack_config() -> Result<Config, DynamoDbContextError> {
     let base_config = aws_config::load_from_env().await;
     Ok(aws_sdk_dynamodb::config::Builder::from(&base_config)
-        .endpoint_resolver(localstack::get_endpoint()?)
+        .endpoint_url(localstack::get_endpoint().unwrap())
         .build())
 }
 
@@ -1340,27 +1339,32 @@ pub enum InvalidTableName {
 pub enum DynamoDbContextError {
     /// An error occurred while getting the item.
     #[error(transparent)]
-    Get(#[from] Box<SdkError<aws_sdk_dynamodb::error::GetItemError>>),
+    Get(#[from] Box<SdkError<aws_sdk_dynamodb::operation::get_item::GetItemError>>),
 
     /// An error occurred while writing a batch of items.
     #[error(transparent)]
-    BatchWriteItem(#[from] Box<SdkError<aws_sdk_dynamodb::error::BatchWriteItemError>>),
+    BatchWriteItem(
+        #[from] Box<SdkError<aws_sdk_dynamodb::operation::batch_write_item::BatchWriteItemError>>,
+    ),
 
     /// An error occurred while writing a transaction of items.
     #[error(transparent)]
-    TransactWriteItem(#[from] Box<SdkError<aws_sdk_dynamodb::error::TransactWriteItemsError>>),
+    TransactWriteItem(
+        #[from]
+        Box<SdkError<aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError>>,
+    ),
 
     /// An error occurred while doing a Query.
     #[error(transparent)]
-    Query(#[from] Box<SdkError<aws_sdk_dynamodb::error::QueryError>>),
+    Query(#[from] Box<SdkError<aws_sdk_dynamodb::operation::query::QueryError>>),
 
     /// An error occurred while deleting a table
     #[error(transparent)]
-    DeleteTable(#[from] Box<SdkError<aws_sdk_dynamodb::error::DeleteTableError>>),
+    DeleteTable(#[from] Box<SdkError<aws_sdk_dynamodb::operation::delete_table::DeleteTableError>>),
 
     /// An error occurred while listing tables
     #[error(transparent)]
-    ListTables(#[from] Box<SdkError<aws_sdk_dynamodb::error::ListTablesError>>),
+    ListTables(#[from] Box<SdkError<aws_sdk_dynamodb::operation::list_tables::ListTablesError>>),
 
     /// The transact maximum size is MAX_TRANSACT_WRITE_ITEM_SIZE.
     #[error("The transact must have length at most MAX_TRANSACT_WRITE_ITEM_SIZE")]
@@ -1428,7 +1432,7 @@ pub enum DynamoDbContextError {
 
     /// An error occurred while creating the table.
     #[error(transparent)]
-    CreateTable(#[from] SdkError<aws_sdk_dynamodb::error::CreateTableError>),
+    CreateTable(#[from] SdkError<aws_sdk_dynamodb::operation::create_table::CreateTableError>),
 }
 
 impl<InnerError> From<SdkError<InnerError>> for DynamoDbContextError
@@ -1492,17 +1496,13 @@ trait IsResourceInUseException {
     fn is_resource_in_use_exception(&self) -> bool;
 }
 
-impl IsResourceInUseException for SdkError<aws_sdk_dynamodb::error::CreateTableError> {
+impl IsResourceInUseException
+    for SdkError<aws_sdk_dynamodb::operation::create_table::CreateTableError>
+{
     fn is_resource_in_use_exception(&self) -> bool {
         matches!(
-            self,
-            SdkError::ServiceError {
-                err: aws_sdk_dynamodb::error::CreateTableError {
-                    kind: aws_sdk_dynamodb::error::CreateTableErrorKind::ResourceInUseException(_),
-                    ..
-                },
-                ..
-            }
+            self, SdkError::ServiceError(error)
+            if matches!(error.err(), CreateTableError::ResourceInUseException(_))
         )
     }
 }
@@ -1551,23 +1551,23 @@ impl LocalStackTestContext {
     /// Creates an [`Endpoint`] using the configuration in the [`LOCALSTACK_ENDPOINT`] environment
     /// variable.
     fn load_endpoint() -> Result<Endpoint, Error> {
-        let endpoint_address = env::var(LOCALSTACK_ENDPOINT)
-            .with_context(|| {
-                format!(
-                    "Missing LocalStack endpoint address in {LOCALSTACK_ENDPOINT:?} \
+        let endpoint_address = env::var(LOCALSTACK_ENDPOINT).with_context(|| {
+            format!(
+                "Missing LocalStack endpoint address in {LOCALSTACK_ENDPOINT:?} \
                     environment variable"
-                )
-            })?
-            .parse()
-            .context("LocalStack endpoint address is not a valid URI")?;
-
-        Ok(Endpoint::immutable(endpoint_address))
+            )
+        })?;
+        Ok(Endpoint::builder().address(endpoint_address).build())
     }
 
     /// Creates a new [`aws_sdk_dynamodb::Config`] for tests, using a LocalStack instance.
     pub fn dynamo_db_config(&self) -> aws_sdk_dynamodb::Config {
         aws_sdk_dynamodb::config::Builder::from(&self.base_config)
-            .endpoint_resolver(self.endpoint.clone())
+            .endpoint_url(
+                self.endpoint
+                    .address()
+                    .map_or_else(String::new, str::to_string),
+            )
             .build()
     }
 }
