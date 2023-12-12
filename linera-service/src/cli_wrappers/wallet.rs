@@ -38,7 +38,7 @@ const CLIENT_SERVICE_ENV: &str = "LINERA_CLIENT_SERVICE_PARAMS";
 
 fn reqwest_client() -> reqwest::Client {
     reqwest::ClientBuilder::new()
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(300))
         .build()
         .unwrap()
 }
@@ -138,8 +138,8 @@ impl ClientWrapper {
                 "--max-pending-messages",
                 &self.max_pending_messages.to_string(),
             ])
-            .args(["--send-timeout-us", "10000000"])
-            .args(["--recv-timeout-us", "10000000"])
+            .args(["--send-timeout-us", "100000000"])
+            .args(["--recv-timeout-us", "100000000"])
             .arg("--wait-for-outgoing-messages");
         Ok(command)
     }

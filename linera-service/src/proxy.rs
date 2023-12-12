@@ -32,11 +32,11 @@ pub struct ProxyOptions {
     config_path: PathBuf,
 
     /// Timeout for sending queries (us)
-    #[arg(long, default_value = "4000000")]
+    #[arg(long, default_value = "40000000")]
     send_timeout_us: u64,
 
     /// Timeout for receiving responses (us)
-    #[arg(long, default_value = "4000000")]
+    #[arg(long, default_value = "40000000")]
     recv_timeout_us: u64,
 
     /// The number of Tokio worker threads to use.

@@ -608,11 +608,11 @@ struct ClientOptions {
     with_wallet: Option<u32>,
 
     /// Timeout for sending queries (us)
-    #[arg(long, default_value = "4000000")]
+    #[arg(long, default_value = "40000000")]
     send_timeout_us: u64,
 
     /// Timeout for receiving responses (us)
-    #[arg(long, default_value = "4000000")]
+    #[arg(long, default_value = "40000000")]
     recv_timeout_us: u64,
 
     #[arg(long, default_value = "10")]
