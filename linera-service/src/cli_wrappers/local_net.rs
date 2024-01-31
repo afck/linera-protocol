@@ -22,6 +22,10 @@ use tonic_health::proto::{
 };
 use tracing::{info, warn};
 
+use super::{wallet::FaucetService, Faucet, FaucetOption};
+
+const FAUCET_PORT: u16 = 8090;
+
 /// The information needed to start a [`LocalNet`].
 pub struct LocalNetConfig {
     pub database: Database,
@@ -53,6 +57,9 @@ pub struct LocalNet {
     num_shards: usize,
     validator_names: BTreeMap<usize, String>,
     running_validators: BTreeMap<usize, Validator>,
+    faucet_service: Option<FaucetService>,
+    faucet: Faucet,
+    admin_client: Option<ClientWrapper>,
     table_name: String,
     set_init: HashSet<(usize, usize)>,
     tmp_dir: Arc<TempDir>,
@@ -128,7 +135,7 @@ impl LocalNetTestingConfig {
             database,
             network,
             num_other_initial_chains: 10,
-            initial_amount: Amount::from_tokens(10),
+            initial_amount: Amount::from_tokens(1_000_000),
         }
     }
 
@@ -147,7 +154,7 @@ impl LocalNetTestingConfig {
 impl LineraNetConfig for LocalNetConfig {
     type Net = LocalNet;
 
-    async fn instantiate(self) -> Result<(Self::Net, ClientWrapper)> {
+    async fn instantiate(self) -> Result<Self::Net> {
         ensure!(
             self.num_shards == 1 || self.database != Database::RocksDb,
             "Multiple shards not supported with RocksDB"
@@ -160,18 +167,17 @@ impl LineraNetConfig for LocalNetConfig {
             self.num_initial_validators,
             self.num_shards,
         )?;
-        let client = net.make_client().await;
         ensure!(
             self.num_initial_validators > 0,
             "There should be at least one initial validator"
         );
-        net.generate_initial_validator_config().await.unwrap();
-        client
-            .create_genesis_config(self.num_other_initial_chains, self.initial_amount)
+        net.generate_initial_validator_config()
             .await
-            .unwrap();
-        net.run().await.unwrap();
-        Ok((net, client))
+            .context("failed to generate validator config")?;
+        net.run(self.num_other_initial_chains, self.initial_amount)
+            .await
+            .context("failed to run local network")?;
+        Ok(net)
     }
 }
 
@@ -180,7 +186,7 @@ impl LineraNetConfig for LocalNetConfig {
 impl LineraNetConfig for LocalNetTestingConfig {
     type Net = LocalNet;
 
-    async fn instantiate(self) -> Result<(Self::Net, ClientWrapper)> {
+    async fn instantiate(self) -> Result<Self::Net> {
         let seed = 37;
         let table_name = linera_views::test_utils::get_table_name();
         let num_validators = 4;
@@ -197,16 +203,12 @@ impl LineraNetConfig for LocalNetTestingConfig {
             num_validators,
             num_shards,
         )?;
-        let client = net.make_client().await;
         if num_validators > 0 {
-            net.generate_initial_validator_config().await.unwrap();
-            client
-                .create_genesis_config(self.num_other_initial_chains, self.initial_amount)
+            net.run(self.num_other_initial_chains, self.initial_amount)
                 .await
                 .unwrap();
-            net.run().await.unwrap();
         }
-        Ok((net, client))
+        Ok(net)
     }
 }
 
@@ -214,8 +216,12 @@ impl LineraNetConfig for LocalNetTestingConfig {
 impl LineraNet for LocalNet {
     async fn ensure_is_running(&mut self) -> Result<()> {
         for validator in self.running_validators.values_mut() {
-            validator.ensure_is_running().context("in local network")?
+            validator.ensure_is_running().context("in local network")?;
         }
+        self.faucet_service
+            .as_mut()
+            .context("missing faucet")?
+            .ensure_is_running()?;
         Ok(())
     }
 
@@ -233,9 +239,21 @@ impl LineraNet for LocalNet {
         client
     }
 
+    async fn take_admin_client(&mut self) -> Option<ClientWrapper> {
+        self.admin_client.take()
+    }
+
+    fn faucet(&self) -> &Faucet {
+        &self.faucet
+    }
+
     async fn terminate(&mut self) -> Result<()> {
+        self.admin_client.take();
         for validator in self.running_validators.values_mut() {
             validator.terminate().await.context("in local network")?
+        }
+        if let Some(faucet) = self.faucet_service.take() {
+            faucet.terminate().await?;
         }
         Ok(())
     }
@@ -259,6 +277,9 @@ impl LocalNet {
             num_shards,
             validator_names: BTreeMap::new(),
             running_validators: BTreeMap::new(),
+            faucet_service: None,
+            faucet: Faucet::new(format!("http://localhost:{}", FAUCET_PORT)),
+            admin_client: None,
             table_name,
             set_init: HashSet::new(),
             tmp_dir: Arc::new(tempdir()?),
@@ -467,10 +488,27 @@ impl LocalNet {
         Ok(child)
     }
 
-    async fn run(&mut self) -> Result<()> {
+    async fn run(&mut self, num_other_initial_chains: u32, initial_amount: Amount) -> Result<()> {
+        self.generate_initial_validator_config().await.unwrap();
+        let admin_client = self.make_client().await;
+        admin_client
+            .create_genesis_config(num_other_initial_chains, initial_amount)
+            .await
+            .unwrap();
         for i in 0..self.num_initial_validators {
             self.start_validator(i).await?;
         }
+        let faucet_client = self.make_client().await;
+        faucet_client.wallet_init(&[], FaucetOption::None).await?;
+        let faucet_chain = admin_client
+            .open_and_assign(&faucet_client, initial_amount.saturating_sub(Amount::ONE))
+            .await?;
+        self.admin_client = Some(admin_client);
+        self.faucet_service = Some(
+            faucet_client
+                .run_faucet(Some(FAUCET_PORT), faucet_chain, Amount::from_tokens(100))
+                .await?,
+        );
         Ok(())
     }
 

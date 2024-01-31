@@ -213,6 +213,7 @@ where
         let start_timestamp = client.storage_client().await.current_time();
         client.process_inbox().await?;
         let start_balance = client.local_balance().await?;
+        tracing::info!("Faucet started; balance: {}", start_balance);
         Ok(Self {
             client: Arc::new(Mutex::new(client)),
             genesis_config,

@@ -163,7 +163,16 @@ impl ClientWrapper {
             ])
             .args(["--initial-funding", &initial_funding.to_string()])
             .args(["--committee", "committee.json"])
-            .args(["--genesis", "genesis.json"]);
+            .args(["--genesis", "genesis.json"])
+            .args(["--block-price", "0.001"])
+            .args(["--fuel-unit-price", "0.000_000_01"])
+            .args(["--read-operation-price", "0.000_01"])
+            .args(["--byte-read-price", "0.000_000_01"])
+            .args(["--byte-written-price", "0.000_000_1"])
+            .args(["--byte-stored-price", "0.000_000_01"])
+            .args(["--maximum-bytes-read-per-block", "100000000"])
+            .args(["--maximum-bytes-written-per-block", "10000000"])
+            .args(["--message-byte-price", "0.000_000_1"]);
         if let Some(seed) = self.testing_prng_seed {
             command.arg("--testing-prng-seed").arg(seed.to_string());
         }
@@ -975,7 +984,7 @@ pub struct Faucet {
 }
 
 impl Faucet {
-    pub fn new(url: String) -> Self {
+    pub const fn new(url: String) -> Self {
         Self { url }
     }
 

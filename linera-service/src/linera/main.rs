@@ -1495,7 +1495,8 @@ async fn run(options: ClientOptions) -> Result<(), anyhow::Error> {
                             num_shards: *shards,
                             binaries: binaries.clone(),
                         };
-                        let (mut net, client1) = config.instantiate().await?;
+                        let mut net = config.instantiate().await?;
+                        let client1 = net.make_funded_client().await?;
                         let result = Ok(net_up(extra_wallets, &mut net, client1).await?);
                         listen_for_signals(&mut shutdown_receiver, &mut net).await?;
                         result
@@ -1513,7 +1514,8 @@ async fn run(options: ClientOptions) -> Result<(), anyhow::Error> {
                         num_initial_validators: *validators,
                         num_shards: *shards,
                     };
-                    let (mut net, client1) = config.instantiate().await?;
+                    let mut net = config.instantiate().await?;
+                    let client1 = net.make_funded_client().await?;
                     let result = Ok(net_up(extra_wallets, &mut net, client1).await?);
                     listen_for_signals(&mut shutdown_receiver, &mut net).await?;
                     result

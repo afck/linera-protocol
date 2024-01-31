@@ -93,7 +93,8 @@ async fn test_end_to_end_operations_indexer(config: impl LineraNetConfig) {
     // launching network, service and indexer
     let _guard = INTEGRATION_TEST_GUARD.lock().await;
 
-    let (mut net, client) = config.instantiate().await.unwrap();
+    let mut net = config.instantiate().await.unwrap();
+    let client = net.make_funded_client().await.unwrap();
     let mut node_service = client.run_node_service(None).await.unwrap();
     let mut indexer = run_indexer(&client.tmp_dir).await;
 
@@ -110,8 +111,8 @@ async fn test_end_to_end_operations_indexer(config: impl LineraNetConfig) {
     );
 
     // making a few transfers
-    let chain0 = ChainId::root(0);
-    let chain1 = ChainId::root(1);
+    let chain0 = client.get_wallet().unwrap().default_chain().unwrap();
+    let chain1 = client.open_and_assign(&client, Amount::ONE).await.unwrap();
     for _ in 0..10 {
         transfer(&req_client, chain0, chain1, "0.1").await;
         tokio::time::sleep(Duration::from_millis(TRANSFER_DELAY_MILLIS)).await;

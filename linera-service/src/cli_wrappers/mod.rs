@@ -33,7 +33,7 @@ mod wallet;
 
 pub use wallet::{ApplicationWrapper, ClientWrapper, Faucet, FaucetOption, NodeService};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 
 /// The information needed to start a Linera net of a particular kind.
@@ -41,7 +41,7 @@ use async_trait::async_trait;
 pub trait LineraNetConfig {
     type Net: LineraNet + Sized + Send + Sync + 'static;
 
-    async fn instantiate(self) -> Result<(Self::Net, ClientWrapper)>;
+    async fn instantiate(self) -> Result<Self::Net>;
 }
 
 /// A running Linera net.
@@ -51,7 +51,20 @@ pub trait LineraNet {
 
     async fn make_client(&mut self) -> ClientWrapper;
 
+    async fn take_admin_client(&mut self) -> Option<ClientWrapper>;
+
+    fn faucet(&self) -> &Faucet;
+
     async fn terminate(&mut self) -> Result<()>;
+
+    async fn make_funded_client(&mut self) -> Result<ClientWrapper> {
+        let client = self.make_client().await;
+        client
+            .wallet_init(&[], FaucetOption::NewChain(self.faucet()))
+            .await
+            .context("failed to initialize the wallet using the faucet")?;
+        Ok(client)
+    }
 }
 
 /// Network protocol in use outside and inside a Linera net.

@@ -4,7 +4,8 @@
 use crate::{
     cli_wrappers::{
         docker::DockerImage, helmfile::HelmFile, kind::KindCluster, kubectl::KubectlInstance,
-        util::get_github_root, ClientWrapper, LineraNet, LineraNetConfig, Network,
+        util::get_github_root, wallet::FaucetService, ClientWrapper, Faucet, LineraNet,
+        LineraNetConfig, Network,
     },
     util::{self, CommandExt},
 };
@@ -13,22 +14,23 @@ use async_trait::async_trait;
 use futures::{future, lock::Mutex};
 use k8s_openapi::api::core::v1::Pod;
 use kube::{api::ListParams, Api, Client};
-use linera_base::data_types::Amount;
-use std::{path::PathBuf, sync::Arc};
+use linera_base::{data_types::Amount, identifiers::ChainId};
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
 use tempfile::{tempdir, TempDir};
 use tokio::process::Command;
 
 #[cfg(any(test, feature = "test"))]
-use {
-    crate::{cli_wrappers::wallet::FaucetOption, util::current_binary_parent},
-    tokio::sync::OnceCell,
-};
+use {crate::util::current_binary_parent, tokio::sync::OnceCell};
 
 #[cfg(any(test, feature = "test"))]
-static SHARED_LOCAL_KUBERNETES_TESTING_NET: OnceCell<(
-    Arc<Mutex<LocalKubernetesNet>>,
-    ClientWrapper,
-)> = OnceCell::const_new();
+static SHARED_LOCAL_KUBERNETES_TESTING_NET: OnceCell<Arc<Mutex<LocalKubernetesNet>>> =
+    OnceCell::const_new();
+static FAUCET: OnceLock<Faucet> = OnceLock::new();
+
+const FAUCET_PORT: u16 = 8090;
 
 /// The information needed to start a [`LocalKubernetesNet`].
 pub struct LocalKubernetesNetConfig {
@@ -58,6 +60,9 @@ pub struct LocalKubernetesNet {
     binaries: Option<Option<PathBuf>>,
     kubectl_instance: Arc<Mutex<KubectlInstance>>,
     kind_clusters: Vec<KindCluster>,
+    faucet_service: Option<Arc<FaucetService>>,
+    faucet: Faucet,
+    admin_client: Arc<Mutex<Option<ClientWrapper>>>,
     num_initial_validators: usize,
     num_shards: usize,
 }
@@ -97,7 +102,7 @@ impl SharedLocalKubernetesNetTestingConfig {
 impl LineraNetConfig for LocalKubernetesNetConfig {
     type Net = LocalKubernetesNet;
 
-    async fn instantiate(self) -> Result<(Self::Net, ClientWrapper)> {
+    async fn instantiate(self) -> Result<Self::Net> {
         ensure!(
             self.num_initial_validators > 0,
             "There should be at least one initial validator"
@@ -128,7 +133,7 @@ impl LineraNetConfig for LocalKubernetesNetConfig {
             .unwrap();
         net.run().await.unwrap();
 
-        Ok((net, client))
+        Ok(net)
     }
 }
 
@@ -137,9 +142,9 @@ impl LineraNetConfig for LocalKubernetesNetConfig {
 impl LineraNetConfig for SharedLocalKubernetesNetTestingConfig {
     type Net = Arc<Mutex<LocalKubernetesNet>>;
 
-    async fn instantiate(self) -> Result<(Self::Net, ClientWrapper)> {
+    async fn instantiate(self) -> Result<Self::Net> {
         let seed = 37;
-        let (net, initial_client) = SHARED_LOCAL_KUBERNETES_TESTING_NET
+        let net = SHARED_LOCAL_KUBERNETES_TESTING_NET
             .get_or_init(|| async {
                 let num_validators = 4;
                 let num_shards = 4;
@@ -162,35 +167,16 @@ impl LineraNetConfig for SharedLocalKubernetesNetTestingConfig {
                 )
                 .expect("Creating LocalKubernetesNet should not fail");
 
-                let initial_client = net.make_client().await;
                 if num_validators > 0 {
                     net.generate_initial_validator_config().await.unwrap();
-                    initial_client
-                        .create_genesis_config(10, Amount::from_tokens(2000))
-                        .await
-                        .unwrap();
                     net.run().await.unwrap();
                 }
 
-                (Arc::new(Mutex::new(net)), initial_client)
+                Arc::new(Mutex::new(net))
             })
             .await;
 
-        let mut net = net.clone();
-        let client = net.make_client().await;
-        // The tests assume we've created a genesis config with 10
-        // chains with 10 tokens each. We create the first chain here
-        client.wallet_init(&[], FaucetOption::None).await.unwrap();
-
-        // And the remaining 9 here
-        for _ in 0..9 {
-            initial_client
-                .open_and_assign(&client, Amount::from_tokens(10))
-                .await
-                .unwrap();
-        }
-
-        Ok((net, client))
+        Ok(net.clone())
     }
 }
 
@@ -208,6 +194,16 @@ impl LineraNet for Arc<Mutex<LocalKubernetesNet>> {
         let mut self_lock = self_clone.lock().await;
 
         self_lock.make_client().await
+    }
+
+    async fn take_admin_client(&mut self) -> Option<ClientWrapper> {
+        let self_clone = self.clone();
+        let mut self_lock = self_clone.lock().await;
+        self_lock.take_admin_client().await
+    }
+
+    fn faucet(&self) -> &Faucet {
+        FAUCET.get_or_init(|| Faucet::new("https://faucet.devnet.linera.net".to_string()))
     }
 
     async fn terminate(&mut self) -> Result<()> {
@@ -271,6 +267,14 @@ impl LineraNet for LocalKubernetesNet {
         client
     }
 
+    async fn take_admin_client(&mut self) -> Option<ClientWrapper> {
+        self.admin_client.lock().await.take()
+    }
+
+    fn faucet(&self) -> &Faucet {
+        &self.faucet
+    }
+
     async fn terminate(&mut self) -> Result<()> {
         let mut kubectl_instance = self.kubectl_instance.lock().await;
         let mut errors = Vec::new();
@@ -322,6 +326,9 @@ impl LocalKubernetesNet {
             binaries,
             kubectl_instance: Arc::new(Mutex::new(kubectl_instance)),
             kind_clusters,
+            faucet_service: None,
+            faucet: Faucet::new(format!("http://localhost:{}", FAUCET_PORT)),
+            admin_client: Arc::new(Mutex::new(None)),
             num_initial_validators,
             num_shards,
         })
@@ -405,6 +412,22 @@ impl LocalKubernetesNet {
             &github_root,
         )
         .await?;
+
+        let client = self.make_client().await;
+        client
+            .create_genesis_config(10, Amount::from_tokens(2000))
+            .await
+            .unwrap();
+        self.faucet_service = Some(Arc::new(
+            client
+                .run_faucet(
+                    Some(FAUCET_PORT),
+                    ChainId::root(1),
+                    Amount::from_tokens(100),
+                )
+                .await
+                .unwrap(),
+        ));
 
         let base_dir = github_root
             .join("kubernetes")
