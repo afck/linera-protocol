@@ -126,7 +126,7 @@ impl Drop for FileLock {
 pub struct WalletState {
     inner: Wallet,
     wallet_path: PathBuf,
-    _lock: FileLock,
+    lock: FileLock,
 }
 
 impl WalletState {
@@ -149,7 +149,7 @@ impl WalletState {
         Ok(Self {
             inner,
             wallet_path: path.into(),
-            _lock: file_lock,
+            lock: file_lock,
         })
     }
 
@@ -158,21 +158,21 @@ impl WalletState {
         genesis_config: GenesisConfig,
         testing_prng_seed: Option<u64>,
     ) -> Result<Self, anyhow::Error> {
-        let file = Self::open_options().read(true).open(path)?;
+        let file = Self::open_options().open(path)?;
         let file_lock = FileLock::new(file, path)?;
         let mut reader = BufReader::new(&file_lock.file);
         if reader.fill_buf()?.is_empty() {
             Ok(Self {
                 inner: Wallet::new(genesis_config, testing_prng_seed),
                 wallet_path: path.into(),
-                _lock: file_lock,
+                lock: file_lock,
             })
         } else {
             let inner = serde_json::from_reader(reader)?;
             Ok(Self {
                 inner,
                 wallet_path: path.into(),
-                _lock: file_lock,
+                lock: file_lock,
             })
         }
     }
@@ -184,13 +184,14 @@ impl WalletState {
     /// writing to disk.
     ///
     /// The temporary file is then renamed to the original wallet name. If
-    /// serialization or writing to disk fails, the temporary filed is
+    /// serialization or writing to disk fails, the temporary file is
     /// deleted.
     pub fn write(&mut self) -> Result<(), anyhow::Error> {
         let mut temp_file_path = self.wallet_path.clone();
         temp_file_path.set_extension("json.bak");
         let backup_file = Self::open_options().open(&temp_file_path)?;
-        let mut temp_file_writer = BufWriter::new(backup_file);
+        let file_lock = FileLock::new(backup_file, &temp_file_path)?;
+        let mut temp_file_writer = BufWriter::new(file_lock.file.try_clone()?);
         if let Err(e) = serde_json::to_writer_pretty(&mut temp_file_writer, &self.inner) {
             fs_err::remove_file(&temp_file_path)?;
             bail!("failed to serialize the wallet state: {}", e)
@@ -200,6 +201,7 @@ impl WalletState {
             bail!("failed to write the wallet state: {}", e);
         }
         fs_err::rename(&temp_file_path, &self.wallet_path)?;
+        self.lock = file_lock;
         Ok(())
     }
 
@@ -210,7 +212,7 @@ impl WalletState {
         let mut options = OpenOptions::new();
         #[cfg(target_family = "unix")]
         fs_err::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        options.create(true).write(true);
+        options.create(true).write(true).read(true);
         options
     }
 }
