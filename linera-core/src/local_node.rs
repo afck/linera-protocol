@@ -393,33 +393,50 @@ where
         name: ValidatorName,
         mut node: A,
         chain_id: ChainId,
-        start: BlockHeight,
+        mut start: BlockHeight,
         stop: BlockHeight,
     ) -> Result<(), LocalNodeError>
     where
         A: LocalValidatorNode + Clone + 'static,
     {
-        let limit = u64::from(stop)
-            .checked_sub(u64::from(start))
-            .ok_or(ArithmeticError::Overflow)?;
-        let range = BlockHeightRange {
-            start,
-            limit: Some(limit),
-        };
-        let query = ChainInfoQuery::new(chain_id).with_sent_certificates_in_range(range);
-        if let Ok(response) = node.handle_chain_info_query(query).await {
-            if response.check(name).is_ok() {
-                let ChainInfo {
-                    requested_sent_certificates,
-                    ..
-                } = *response.info;
-                self.try_process_certificates(
-                    name,
-                    &mut node,
-                    chain_id,
-                    requested_sent_certificates,
-                )
-                .await;
+        while start < stop {
+            let limit = u64::from(stop)
+                .checked_sub(u64::from(start))
+                .ok_or(ArithmeticError::Overflow)?
+                .max(1000);
+            let range = BlockHeightRange {
+                start,
+                limit: Some(limit),
+            };
+            let query = ChainInfoQuery::new(chain_id).with_sent_certificates_in_range(range);
+            if let Ok(response) = node.handle_chain_info_query(query).await {
+                if response.check(name).is_ok() {
+                    let ChainInfo {
+                        requested_sent_certificates,
+                        ..
+                    } = *response.info;
+                    if let Some(height) = requested_sent_certificates
+                        .iter()
+                        .map(|cert| cert.value().height())
+                        .max()
+                    {
+                        if height < start {
+                            break;
+                        }
+                        start = height.try_add_one()?;
+                    }
+                    self.try_process_certificates(
+                        name,
+                        &mut node,
+                        chain_id,
+                        requested_sent_certificates,
+                    )
+                    .await;
+                } else {
+                    break;
+                }
+            } else {
+                break;
             }
         }
         Ok(())
