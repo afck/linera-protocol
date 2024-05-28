@@ -5,10 +5,11 @@ use std::{iter, time::Duration};
 
 use futures::{future, stream, StreamExt};
 use linera_base::{
+    crypto::CryptoHash,
     data_types::{Blob, HashedBlob},
     identifiers::{BlobId, ChainId},
 };
-use linera_chain::data_types;
+use linera_chain::data_types::{self, Certificate, CertificateValue};
 #[cfg(web)]
 use linera_core::node::{
     LocalNotificationStream as NotificationStream, LocalValidatorNode as ValidatorNode,
@@ -273,6 +274,42 @@ impl ValidatorNode for GrpcClient {
             .await?
             .into_inner()
             .into())
+    }
+
+    #[instrument(target = "grpc_client", skip_all, err, fields(address = self.address))]
+    async fn download_certificate_value(
+        &mut self,
+        hash: CryptoHash,
+    ) -> Result<CertificateValue, NodeError> {
+        Ok(self
+            .client
+            .download_certificate_value(<CryptoHash as Into<api::CryptoHash>>::into(hash))
+            .await?
+            .into_inner()
+            .try_into()?)
+    }
+
+    #[instrument(target = "grpc_client", skip_all, err, fields(address = self.address))]
+    async fn download_certificates(
+        &mut self,
+        hashes: Vec<CryptoHash>,
+    ) -> Result<Vec<Certificate>, NodeError> {
+        Ok(self
+            .client
+            .download_certificates(<Vec<CryptoHash> as Into<api::CryptoHashes>>::into(hashes))
+            .await?
+            .into_inner()
+            .try_into()?)
+    }
+
+    #[instrument(target = "grpc_client", skip_all, err, fields(address = self.address))]
+    async fn download_certificate(&mut self, hash: CryptoHash) -> Result<Certificate, NodeError> {
+        Ok(self
+            .client
+            .download_certificate(<CryptoHash as Into<api::CryptoHash>>::into(hash))
+            .await?
+            .into_inner()
+            .try_into()?)
     }
 }
 

@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use linera_base::{
+    crypto::CryptoHash,
     data_types::{Blob, HashedBlob},
     identifiers::{BlobId, ChainId},
 };
 use linera_chain::data_types::{
-    BlockProposal, Certificate, HashedCertificateValue, LiteCertificate,
+    BlockProposal, Certificate, CertificateValue, HashedCertificateValue, LiteCertificate,
 };
 #[cfg(web)]
 use linera_core::node::{
@@ -151,6 +152,39 @@ impl ValidatorNode for Client {
 
             #[cfg(with_simple_network)]
             Client::Simple(simple_client) => simple_client.download_blob(blob_id).await?,
+        })
+    }
+
+    async fn download_certificate_value(
+        &mut self,
+        hash: CryptoHash,
+    ) -> Result<CertificateValue, NodeError> {
+        Ok(match self {
+            Client::Grpc(grpc_client) => grpc_client.download_certificate_value(hash).await?,
+
+            #[cfg(with_simple_network)]
+            Client::Simple(simple_client) => simple_client.download_certificate_value(hash).await?,
+        })
+    }
+
+    async fn download_certificates(
+        &mut self,
+        hashes: Vec<CryptoHash>,
+    ) -> Result<Vec<Certificate>, NodeError> {
+        Ok(match self {
+            Client::Grpc(grpc_client) => grpc_client.download_certificates(hashes).await?,
+
+            #[cfg(with_simple_network)]
+            Client::Simple(simple_client) => simple_client.download_certificates(hashes).await?,
+        })
+    }
+
+    async fn download_certificate(&mut self, hash: CryptoHash) -> Result<Certificate, NodeError> {
+        Ok(match self {
+            Client::Grpc(grpc_client) => grpc_client.download_certificate(hash).await?,
+
+            #[cfg(with_simple_network)]
+            Client::Simple(simple_client) => simple_client.download_certificate(hash).await?,
         })
     }
 }

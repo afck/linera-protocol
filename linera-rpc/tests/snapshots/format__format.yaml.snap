@@ -213,16 +213,13 @@ ChainInfo:
     - requested_pending_messages:
         SEQ:
           TYPENAME: IncomingMessage
-    - requested_sent_certificates:
+    - requested_sent_certificate_hashes:
         SEQ:
-          TYPENAME: Certificate
+          TYPENAME: CryptoHash
     - count_received_log: U64
     - requested_received_log:
         SEQ:
           TYPENAME: ChainAndHeight
-    - requested_hashed_certificate_value:
-        OPTION:
-          TYPENAME: CertificateValue
 ChainInfoQuery:
   STRUCT:
     - chain_id:
@@ -235,7 +232,7 @@ ChainInfoQuery:
           TYPENAME: Owner
     - request_committees: BOOL
     - request_pending_messages: BOOL
-    - request_sent_certificates_in_range:
+    - request_sent_certificate_hashes_in_range:
         OPTION:
           TYPENAME: BlockHeightRange
     - request_received_log_excluding_first_nth:
@@ -243,9 +240,6 @@ ChainInfoQuery:
     - request_manager_values: BOOL
     - request_leader_timeout: BOOL
     - request_fallback: BOOL
-    - request_hashed_certificate_value:
-        OPTION:
-          TYPENAME: CryptoHash
 ChainInfoResponse:
   STRUCT:
     - info:
@@ -763,28 +757,54 @@ RpcMessage:
         NEWTYPE:
           TYPENAME: BlobId
     5:
-      VersionInfoQuery: UNIT
+      DownloadCertificateValue:
+        NEWTYPE:
+          TYPENAME: CryptoHash
     6:
+      DownloadCertificates:
+        NEWTYPE:
+          SEQ:
+            TYPENAME: CryptoHash
+    7:
+      DownloadCertificate:
+        NEWTYPE:
+          TYPENAME: CryptoHash
+    8:
+      VersionInfoQuery: UNIT
+    9:
       Vote:
         NEWTYPE:
           TYPENAME: LiteVote
-    7:
+    10:
       ChainInfoResponse:
         NEWTYPE:
           TYPENAME: ChainInfoResponse
-    8:
+    11:
       Error:
         NEWTYPE:
           TYPENAME: NodeError
-    9:
+    12:
       VersionInfoResponse:
         NEWTYPE:
           TYPENAME: VersionInfo
-    10:
+    13:
       DownloadBlobResponse:
         NEWTYPE:
           TYPENAME: Blob
-    11:
+    14:
+      DownloadCertificateValueResponse:
+        NEWTYPE:
+          TYPENAME: CertificateValue
+    15:
+      DownloadCertificatesResponse:
+        NEWTYPE:
+          SEQ:
+            TYPENAME: Certificate
+    16:
+      DownloadCertificateResponse:
+        NEWTYPE:
+          TYPENAME: Certificate
+    17:
       CrossChainRequest:
         NEWTYPE:
           TYPENAME: CrossChainRequest

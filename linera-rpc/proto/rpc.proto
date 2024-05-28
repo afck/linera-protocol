@@ -23,7 +23,7 @@ service ValidatorWorker {
   rpc HandleLiteCertificate(LiteCertificate) returns (ChainInfoResult);
 
   // Process a certificate.
-  rpc HandleCertificate(Certificate) returns (ChainInfoResult);
+  rpc HandleCertificate(CertificateRequest) returns (ChainInfoResult);
 
   // Handle information queries for this chain.
   rpc HandleChainInfoQuery(ChainInfoQuery) returns (ChainInfoResult);
@@ -41,7 +41,7 @@ service ValidatorNode {
   rpc HandleLiteCertificate(LiteCertificate) returns (ChainInfoResult);
 
   // Process a certificate.
-  rpc HandleCertificate(Certificate) returns (ChainInfoResult);
+  rpc HandleCertificate(CertificateRequest) returns (ChainInfoResult);
 
   // Handle information queries for this chain.
   rpc HandleChainInfoQuery(ChainInfoQuery) returns (ChainInfoResult);
@@ -54,6 +54,15 @@ service ValidatorNode {
 
   // Downloads a blob.
   rpc DownloadBlob(BlobId) returns (Blob);
+
+  // Downloads a certificate value.
+  rpc DownloadCertificateValue(CryptoHash) returns (CertificateValue);
+
+  // Downloads certificates.
+  rpc DownloadCertificates(CryptoHashes) returns (Certificates);
+
+  // Downloads a certificate.
+  rpc DownloadCertificate(CryptoHash) returns (Certificate);
 }
 
 // Information about the Linera crate version the validator is running
@@ -130,8 +139,8 @@ message ChainInfoQuery {
   // Query the received messages that are waiting be picked in the next block.
   bool request_pending_messages = 4;
 
-  // Query a range of certificates sent from the chain.
-  optional bytes request_sent_certificates_in_range = 5;
+  // Query a range of certificates hashes sent from the chain.
+  optional bytes request_sent_certificate_hashes_in_range = 5;
 
   // Query new certificate removed from the chain.
   optional uint64 request_received_log_excluding_first_nth = 6;
@@ -141,9 +150,6 @@ message ChainInfoQuery {
 
   // Request a signed vote for a leader timeout.
   bool request_leader_timeout = 8;
-
-  // Query a value that contains a binary hashed certificate value (e.g. bytecode) required by this chain.
-  optional bytes request_hashed_certificate_value = 9;
 
   // Query the balance of a given owner.
   optional Owner request_owner_balance = 10;
@@ -197,18 +203,9 @@ message LiteCertificate {
 
 // A certified statement from the committee, together with other certificates
 // required for execution.
-message Certificate {
+message CertificateRequest {
   // The ID of the chain (used for routing).
   ChainId chain_id = 1;
-
-  // The certified value
-  bytes value = 2;
-
-  // The round in which the value was certified.
-  bytes round = 3;
-
-  // Signatures on the value hash and round
-  bytes signatures = 4;
 
   // Other certificates containing bytecode required by the first one
   bytes hashed_certificate_values = 5;
@@ -219,6 +216,47 @@ message Certificate {
 
   // Blobs required by this certificate
   bytes blobs = 7;
+
+  // A certified statement from the committee.
+  Certificate certificate = 8;
+}
+
+// A certified statement from the committee.
+message Certificate {
+  // The certified value
+  bytes value = 1;
+
+  // The round in which the value was certified.
+  bytes round = 2;
+
+  // Signatures on the value hash and round
+  bytes signatures = 3;
+}
+
+message Certificates {
+  repeated Certificate certificates = 1;
+}
+
+message CertificateValue {
+  oneof inner {
+    ValidatedBlock validated_block = 1;
+    ConfirmedBlock confirmed_block = 2;
+    Timeout timeout = 3;
+  }
+}
+
+message ValidatedBlock {
+  bytes executed_block = 1;
+}
+
+message ConfirmedBlock {
+  bytes executed_block = 1;
+}
+
+message Timeout {
+  ChainId chain_id = 1;
+  BlockHeight height = 2;
+  Epoch epoch = 3;
 }
 
 message ChainId {
@@ -227,6 +265,14 @@ message ChainId {
 
 message PublicKey {
   bytes bytes = 1;
+}
+
+message CryptoHash {
+  bytes bytes = 1;
+}
+
+message CryptoHashes {
+  repeated CryptoHash hashes = 1;
 }
 
 message Owner {
@@ -258,4 +304,8 @@ message ChainInfoResponse {
 
 message BlockHeight {
   uint64 height = 1;
+}
+
+message Epoch {
+  uint32 epoch = 1;
 }

@@ -15,7 +15,7 @@ use linera_base::{
     identifiers::{BlobId, ChainDescription, ChainId},
 };
 use linera_chain::data_types::{
-    BlockProposal, Certificate, HashedCertificateValue, LiteCertificate,
+    BlockProposal, Certificate, CertificateValue, HashedCertificateValue, LiteCertificate,
 };
 use linera_execution::{
     committee::{Committee, ValidatorName},
@@ -162,6 +162,33 @@ where
     async fn download_blob(&mut self, blob_id: BlobId) -> Result<Blob, NodeError> {
         self.spawn_and_receive(move |validator, sender| validator.do_download_blob(blob_id, sender))
             .await
+    }
+
+    async fn download_certificate_value(
+        &mut self,
+        hash: CryptoHash,
+    ) -> Result<CertificateValue, NodeError> {
+        self.spawn_and_receive(move |validator, sender| {
+            validator.do_download_certificate_value(hash, sender)
+        })
+        .await
+    }
+
+    async fn download_certificates(
+        &mut self,
+        hashes: Vec<CryptoHash>,
+    ) -> Result<Vec<Certificate>, NodeError> {
+        self.spawn_and_receive(move |validator, sender| {
+            validator.do_download_certificates(hashes, sender)
+        })
+        .await
+    }
+
+    async fn download_certificate(&mut self, hash: CryptoHash) -> Result<Certificate, NodeError> {
+        self.spawn_and_receive(move |validator, sender| {
+            validator.do_download_certificate(hash, sender)
+        })
+        .await
     }
 }
 
@@ -343,6 +370,56 @@ where
             .await
             .map_err(Into::into);
         sender.send(hashed_blob.map(|hashed_blob| hashed_blob.blob().clone()))
+    }
+
+    async fn do_download_certificate_value(
+        self,
+        hash: CryptoHash,
+        sender: oneshot::Sender<Result<CertificateValue, NodeError>>,
+    ) -> Result<(), Result<CertificateValue, NodeError>> {
+        let validator = self.client.lock().await;
+        let certificate = validator
+            .state
+            .storage_client()
+            .read_hashed_certificate_value(hash)
+            .await
+            .map(Into::into)
+            .map_err(Into::into);
+        sender.send(certificate)
+    }
+
+    async fn do_download_certificates(
+        self,
+        hashes: Vec<CryptoHash>,
+        sender: oneshot::Sender<Result<Vec<Certificate>, NodeError>>,
+    ) -> Result<(), Result<Vec<Certificate>, NodeError>> {
+        let validator = self.client.lock().await;
+        let certificates = validator
+            .state
+            .storage_client()
+            .read_certificates(hashes)
+            .await
+            .map(Into::into)
+            .map_err(Into::into);
+
+        sender.send(certificates)
+    }
+
+    async fn do_download_certificate(
+        self,
+        hash: CryptoHash,
+        sender: oneshot::Sender<Result<Certificate, NodeError>>,
+    ) -> Result<(), Result<Certificate, NodeError>> {
+        let validator = self.client.lock().await;
+        let certificates = validator
+            .state
+            .storage_client()
+            .read_certificate(hash)
+            .await
+            .map(Into::into)
+            .map_err(Into::into);
+
+        sender.send(certificates)
     }
 }
 
@@ -657,7 +734,7 @@ where
         target_count: usize,
     ) -> Option<Certificate> {
         let query =
-            ChainInfoQuery::new(chain_id).with_sent_certificates_in_range(BlockHeightRange {
+            ChainInfoQuery::new(chain_id).with_sent_certificate_hashes_in_range(BlockHeightRange {
                 start: block_height,
                 limit: Some(1),
             });
@@ -667,17 +744,19 @@ where
             if let Ok(response) = validator.handle_chain_info_query(query.clone()).await {
                 if response.check(validator.name).is_ok() {
                     let ChainInfo {
-                        mut requested_sent_certificates,
+                        mut requested_sent_certificate_hashes,
                         ..
                     } = *response.info;
-                    if let Some(cert) = requested_sent_certificates.pop() {
-                        if cert.value().is_confirmed()
-                            && cert.value().chain_id() == chain_id
-                            && cert.value().height() == block_height
-                        {
-                            cert.check(&self.initial_committee).unwrap();
-                            count += 1;
-                            certificate = Some(cert);
+                    if let Some(cert_hash) = requested_sent_certificate_hashes.pop() {
+                        if let Ok(cert) = validator.download_certificate(cert_hash).await {
+                            if cert.value().is_confirmed()
+                                && cert.value().chain_id() == chain_id
+                                && cert.value().height() == block_height
+                            {
+                                cert.check(&self.initial_committee).unwrap();
+                                count += 1;
+                                certificate = Some(cert);
+                            }
                         }
                     }
                 }

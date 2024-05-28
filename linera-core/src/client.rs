@@ -730,14 +730,9 @@ where
         &self,
         locations: &[BytecodeLocation],
         nodes: &[(ValidatorName, <P as LocalValidatorNodeProvider>::Node)],
-        chain_id: ChainId,
     ) -> Vec<HashedCertificateValue> {
         future::join_all(locations.iter().map(|location| {
-            LocalNodeClient::<S>::download_hashed_certificate_value(
-                nodes.to_owned(),
-                chain_id,
-                *location,
-            )
+            LocalNodeClient::<S>::download_hashed_certificate_value(nodes.to_owned(), *location)
         }))
         .await
         .into_iter()
@@ -800,7 +795,7 @@ where
                     locations,
                 )) => {
                     let values = self
-                        .find_missing_application_bytecodes(locations, &nodes, block.chain_id)
+                        .find_missing_application_bytecodes(locations, &nodes)
                         .await;
 
                     ensure!(values.len() == locations.len(), err);
@@ -819,7 +814,7 @@ where
                     blob_ids,
                 )) => {
                     let values = self
-                        .find_missing_application_bytecodes(locations, &nodes, block.chain_id)
+                        .find_missing_application_bytecodes(locations, &nodes)
                         .await;
                     let blobs = self.find_missing_blobs(blob_ids, &nodes).await;
 
@@ -871,22 +866,29 @@ where
         let mut new_tracker = tracker;
         for entry in response.info.requested_received_log {
             let query = ChainInfoQuery::new(entry.chain_id)
-                .with_sent_certificates_in_range(BlockHeightRange::single(entry.height));
+                .with_sent_certificate_hashes_in_range(BlockHeightRange::single(entry.height));
             let local_response = node_client
                 .handle_chain_info_query(query.clone())
                 .await
                 .map_err(|error| NodeError::LocalNodeQuery {
                     error: error.to_string(),
                 })?;
-            if !local_response.info.requested_sent_certificates.is_empty() {
+            if !local_response
+                .info
+                .requested_sent_certificate_hashes
+                .is_empty()
+            {
                 new_tracker += 1;
                 continue;
             }
 
             let mut response = node.handle_chain_info_query(query).await?;
-            let Some(certificate) = response.info.requested_sent_certificates.pop() else {
+            let Some(certificate_hash) = response.info.requested_sent_certificate_hashes.pop()
+            else {
                 break;
             };
+
+            let certificate = node.download_certificate(certificate_hash).await?;
             let CertificateValue::ConfirmedBlock { executed_block, .. } = certificate.value()
             else {
                 return Err(NodeError::InvalidChainInfoResponse);
@@ -1238,11 +1240,15 @@ where
         };
         // Collect the hashed certificate values required for execution.
         let committee = self.local_committee().await?;
-        let nodes: Vec<(ValidatorName, P::Node)> =
-            self.validator_node_provider.make_nodes(&committee)?;
+        let nodes = self
+            .validator_node_provider
+            .make_nodes::<Vec<_>>(&committee)?;
         let values = self
             .node_client
-            .read_or_download_hashed_certificate_values(nodes.clone(), block.bytecode_locations())
+            .read_or_download_hashed_certificate_values(
+                nodes.clone(),
+                block.bytecode_locations().into_keys(),
+            )
             .await?;
         let hashed_blobs = self.read_local_blobs(block.blob_ids()).await?;
         // Create the final block proposal.

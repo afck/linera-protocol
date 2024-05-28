@@ -27,7 +27,8 @@ use linera_rpc::{
             notifier_service_server::{NotifierService, NotifierServiceServer},
             validator_node_server::{ValidatorNode, ValidatorNodeServer},
             validator_worker_client::ValidatorWorkerClient,
-            Blob, BlobId, BlockProposal, Certificate, ChainInfoQuery, ChainInfoResult,
+            Blob, BlobId, BlockProposal, Certificate, CertificateRequest, CertificateValue,
+            Certificates, ChainInfoQuery, ChainInfoResult, CryptoHash, CryptoHashes,
             LiteCertificate, Notification, SubscriptionRequest, VersionInfo,
         },
         pool::GrpcConnectionPool,
@@ -349,7 +350,7 @@ where
     #[instrument(skip_all, err(Display))]
     async fn handle_certificate(
         &self,
-        request: Request<Certificate>,
+        request: Request<CertificateRequest>,
     ) -> Result<Response<ChainInfoResult>, Status> {
         let (mut client, inner) = self.client_for_proxy_worker(request).await?;
         Self::log_and_return_proxy_request_outcome(
@@ -404,6 +405,51 @@ where
             .await
             .map_err(|err| Status::from_error(Box::new(err)))?;
         Ok(Response::new(hashed_blob.into_inner().into()))
+    }
+
+    #[instrument(skip_all, err(Display))]
+    async fn download_certificate_value(
+        &self,
+        request: Request<CryptoHash>,
+    ) -> Result<Response<CertificateValue>, Status> {
+        let hash = request.into_inner().try_into()?;
+        let certificate = self
+            .0
+            .storage
+            .read_hashed_certificate_value(hash)
+            .await
+            .map_err(|err| Status::from_error(Box::new(err)))?;
+        Ok(Response::new(certificate.try_into()?))
+    }
+
+    #[instrument(skip_all, err(Display))]
+    async fn download_certificates(
+        &self,
+        request: Request<CryptoHashes>,
+    ) -> Result<Response<Certificates>, Status> {
+        let hashes: Vec<linera_base::crypto::CryptoHash> = request.into_inner().try_into()?;
+        let certificates = self
+            .0
+            .storage
+            .read_certificates(hashes)
+            .await
+            .map_err(|err| Status::from_error(Box::new(err)))?;
+        Ok(Response::new(certificates.try_into()?))
+    }
+
+    #[instrument(skip_all, err(Display))]
+    async fn download_certificate(
+        &self,
+        request: Request<CryptoHash>,
+    ) -> Result<Response<Certificate>, Status> {
+        let hash = request.into_inner().try_into()?;
+        let certificate = self
+            .0
+            .storage
+            .read_certificate(hash)
+            .await
+            .map_err(|err| Status::from_error(Box::new(err)))?;
+        Ok(Response::new(certificate.try_into()?))
     }
 }
 

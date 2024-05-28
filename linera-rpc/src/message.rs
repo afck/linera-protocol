@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use linera_base::{
+    crypto::CryptoHash,
     data_types::Blob,
     identifiers::{BlobId, ChainId},
 };
-use linera_chain::data_types::{BlockProposal, LiteVote};
+use linera_chain::data_types::{BlockProposal, Certificate, CertificateValue, LiteVote};
 use linera_core::{
     data_types::{ChainInfoQuery, ChainInfoResponse, CrossChainRequest},
     node::NodeError,
@@ -25,6 +26,9 @@ pub enum RpcMessage {
     LiteCertificate(Box<HandleLiteCertRequest<'static>>),
     ChainInfoQuery(Box<ChainInfoQuery>),
     DownloadBlob(Box<BlobId>),
+    DownloadCertificateValue(Box<CryptoHash>),
+    DownloadCertificates(Box<Vec<CryptoHash>>),
+    DownloadCertificate(Box<CryptoHash>),
     VersionInfoQuery,
 
     // Outbound
@@ -33,6 +37,9 @@ pub enum RpcMessage {
     Error(Box<NodeError>),
     VersionInfoResponse(Box<VersionInfo>),
     DownloadBlobResponse(Box<Blob>),
+    DownloadCertificateValueResponse(Box<CertificateValue>),
+    DownloadCertificatesResponse(Box<Vec<Certificate>>),
+    DownloadCertificateResponse(Box<Certificate>),
 
     // Internal to a validator
     CrossChainRequest(Box<CrossChainRequest>),
@@ -57,7 +64,13 @@ impl RpcMessage {
             | VersionInfoQuery
             | VersionInfoResponse(_)
             | DownloadBlob(_)
-            | DownloadBlobResponse(_) => {
+            | DownloadBlobResponse(_)
+            | DownloadCertificateValue(_)
+            | DownloadCertificateValueResponse(_)
+            | DownloadCertificates(_)
+            | DownloadCertificate(_)
+            | DownloadCertificatesResponse(_)
+            | DownloadCertificateResponse(_) => {
                 return None;
             }
         };
@@ -71,7 +84,11 @@ impl RpcMessage {
         use RpcMessage::*;
 
         match self {
-            VersionInfoQuery | DownloadBlob(_) => true,
+            VersionInfoQuery
+            | DownloadBlob(_)
+            | DownloadCertificateValue(_)
+            | DownloadCertificates(_)
+            | DownloadCertificate(_) => true,
             BlockProposal(_)
             | LiteCertificate(_)
             | Certificate(_)
@@ -81,7 +98,10 @@ impl RpcMessage {
             | Error(_)
             | ChainInfoResponse(_)
             | VersionInfoResponse(_)
-            | DownloadBlobResponse(_) => false,
+            | DownloadBlobResponse(_)
+            | DownloadCertificateValueResponse(_)
+            | DownloadCertificatesResponse(_)
+            | DownloadCertificateResponse(_) => false,
         }
     }
 }
@@ -116,6 +136,42 @@ impl TryFrom<RpcMessage> for Blob {
         use RpcMessage::*;
         match message {
             DownloadBlobResponse(blob) => Ok(*blob),
+            Error(error) => Err(*error),
+            _ => Err(NodeError::UnexpectedMessage),
+        }
+    }
+}
+
+impl TryFrom<RpcMessage> for CertificateValue {
+    type Error = NodeError;
+    fn try_from(message: RpcMessage) -> Result<Self, Self::Error> {
+        use RpcMessage::*;
+        match message {
+            DownloadCertificateValueResponse(certificate) => Ok(*certificate),
+            Error(error) => Err(*error),
+            _ => Err(NodeError::UnexpectedMessage),
+        }
+    }
+}
+
+impl TryFrom<RpcMessage> for Vec<Certificate> {
+    type Error = NodeError;
+    fn try_from(message: RpcMessage) -> Result<Self, Self::Error> {
+        use RpcMessage::*;
+        match message {
+            DownloadCertificatesResponse(certificate) => Ok(*certificate),
+            Error(error) => Err(*error),
+            _ => Err(NodeError::UnexpectedMessage),
+        }
+    }
+}
+
+impl TryFrom<RpcMessage> for Certificate {
+    type Error = NodeError;
+    fn try_from(message: RpcMessage) -> Result<Self, Self::Error> {
+        use RpcMessage::*;
+        match message {
+            DownloadCertificateResponse(certificate) => Ok(*certificate),
             Error(error) => Err(*error),
             _ => Err(NodeError::UnexpectedMessage),
         }
@@ -179,5 +235,23 @@ impl From<VersionInfo> for RpcMessage {
 impl From<Blob> for RpcMessage {
     fn from(blob: Blob) -> Self {
         RpcMessage::DownloadBlobResponse(Box::new(blob))
+    }
+}
+
+impl From<CertificateValue> for RpcMessage {
+    fn from(certificate: CertificateValue) -> Self {
+        RpcMessage::DownloadCertificateValueResponse(Box::new(certificate))
+    }
+}
+
+impl From<Vec<Certificate>> for RpcMessage {
+    fn from(certificates: Vec<Certificate>) -> Self {
+        RpcMessage::DownloadCertificatesResponse(Box::new(certificates))
+    }
+}
+
+impl From<Certificate> for RpcMessage {
+    fn from(certificate: Certificate) -> Self {
+        RpcMessage::DownloadCertificateResponse(Box::new(certificate))
     }
 }
