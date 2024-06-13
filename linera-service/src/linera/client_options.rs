@@ -744,6 +744,14 @@ pub enum ClientCommand {
         chain_id: Option<ChainId>,
     },
 
+    /// Clear a pending block.
+    ///
+    /// For fast blocks, this should only be done if no honest validator has signed the block yet.
+    ClearPendingBlock {
+        /// The chain with the pending block. If not specified, the wallet's default chain is used.
+        chain_id: Option<ChainId>,
+    },
+
     /// Show the contents of the wallet.
     #[command(subcommand)]
     Wallet(WalletCommand),

@@ -687,6 +687,16 @@ impl ClientWrapper {
         }
     }
 
+    pub async fn clear_pending_block(&self, chain_id: Option<ChainId>) -> Result<()> {
+        let mut command = self.command().await?;
+        command.arg("clear-pending-block");
+        if let Some(chain_id) = chain_id {
+            command.arg(chain_id.to_string());
+        }
+        command.spawn_and_wait_for_stdout().await?;
+        Ok(())
+    }
+
     pub fn load_wallet(&self) -> Result<Wallet> {
         Ok(WalletState::from_file(self.wallet_path().as_path())?.into_inner())
     }

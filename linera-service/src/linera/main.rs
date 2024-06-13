@@ -1027,6 +1027,14 @@ impl Runnable for Job {
                 context.update_and_save_wallet(&mut chain_client).await;
             }
 
+            ClearPendingBlock { chain_id } => {
+                let chain_id = chain_id.unwrap_or_else(|| context.default_chain());
+                info!("Clearing pending block for chain {}", chain_id);
+                let mut chain_client = context.make_chain_client(storage, chain_id);
+                chain_client.clear_pending_block();
+                context.update_and_save_wallet(&mut chain_client).await;
+            }
+
             Wallet(WalletCommand::Init {
                 faucet: Some(faucet_url),
                 with_new_chain: true,

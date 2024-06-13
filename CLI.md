@@ -34,6 +34,7 @@ This document contains the help content for the `linera` command-line program.
 * [`linera keygen`↴](#linera-keygen)
 * [`linera assign`↴](#linera-assign)
 * [`linera retry-pending-block`↴](#linera-retry-pending-block)
+* [`linera clear-pending-block`↴](#linera-clear-pending-block)
 * [`linera wallet`↴](#linera-wallet)
 * [`linera wallet show`↴](#linera-wallet-show)
 * [`linera wallet set-default`↴](#linera-wallet-set-default)
@@ -85,6 +86,7 @@ A Byzantine-fault tolerant sidechain with low-latency finality and high throughp
 * `keygen` — Create an unassigned key-pair
 * `assign` — Link a key owned by the wallet to a chain that was just created for that key
 * `retry-pending-block` — Retry a block we unsuccessfully tried to propose earlier
+* `clear-pending-block` — Clear a pending block
 * `wallet` — Show the contents of the wallet
 * `project` — Manage Linera projects
 * `net` — Manage a local Linera Network
@@ -660,6 +662,20 @@ Retry a block we unsuccessfully tried to propose earlier.
 As long as a block is pending most other commands will fail, since it is unsafe to propose multiple blocks at the same height.
 
 **Usage:** `linera retry-pending-block [CHAIN_ID]`
+
+###### **Arguments:**
+
+* `<CHAIN_ID>` — The chain with the pending block. If not specified, the wallet's default chain is used
+
+
+
+## `linera clear-pending-block`
+
+Clear a pending block.
+
+For fast blocks, this should only be done if no honest validator has signed the block yet.
+
+**Usage:** `linera clear-pending-block [CHAIN_ID]`
 
 ###### **Arguments:**
 
