@@ -1693,7 +1693,6 @@ where
             Round::SingleLeader(_) | Round::Validator(_) => manager.leader == Some(identity),
         };
         if can_propose {
-            let block = block.clone();
             ensure!(
                 block.height == self.next_block_height,
                 ChainClientError::BlockProposalError("Unexpected block height")
@@ -1702,13 +1701,11 @@ where
                 block.previous_block_hash == self.block_hash,
                 ChainClientError::BlockProposalError("Unexpected previous block hash")
             );
-            // Gather information on the current local state.
-            let manager = *self.chain_info_with_manager_values().await?.manager;
             // In the fast round, we must never make any conflicting proposals.
             if round.is_fast() {
                 if let Some(pending) = &self.pending_block {
                     ensure!(
-                        pending == &block,
+                        pending == block,
                         ChainClientError::BlockProposalError(
                             "Client state has a different pending block; \
                          use the `linera retry-pending-block` command to commit that first"
@@ -1720,7 +1717,7 @@ where
             let executed_block =
                 if let Some(validated_block_certificate) = &manager.requested_locked {
                     ensure!(
-                        validated_block_certificate.value().block() == Some(&block),
+                        validated_block_certificate.value().block() == Some(block),
                         ChainClientError::BlockProposalError(
                             "A different block has already been validated at this height"
                         )
@@ -1731,7 +1728,7 @@ where
                         .unwrap()
                         .clone()
                 } else {
-                    self.stage_block_execution_and_discard_failing_messages(block)
+                    self.stage_block_execution_and_discard_failing_messages(block.clone())
                         .await?
                         .0
                 };
