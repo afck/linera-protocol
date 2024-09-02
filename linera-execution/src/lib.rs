@@ -972,6 +972,13 @@ impl Operation {
             Self::User { application_id, .. } => GenericApplicationId::User(*application_id),
         }
     }
+
+    pub fn user_bytes(&self) -> usize {
+        match self {
+            Self::User { bytes, .. } => bytes.len(),
+            Self::System(_) => 0,
+        }
+    }
 }
 
 impl From<SystemMessage> for Message {

@@ -199,6 +199,15 @@ impl IncomingBundle {
             (message_id, posted_message)
         })
     }
+
+    /// Returns the total size of user message data, in bytes.
+    pub fn user_message_bytes(&self) -> usize {
+        self.bundle
+            .messages
+            .iter()
+            .map(PostedMessage::user_bytes)
+            .sum()
+    }
 }
 
 /// What to do with a message picked from the inbox.
@@ -835,6 +844,13 @@ impl PostedMessage {
 
     pub fn is_bouncing(&self) -> bool {
         matches!(self.kind, MessageKind::Bouncing)
+    }
+
+    fn user_bytes(&self) -> usize {
+        match &self.message {
+            Message::User { bytes, .. } => bytes.len(),
+            Message::System(_) => 0,
+        }
     }
 }
 

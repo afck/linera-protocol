@@ -584,12 +584,23 @@ where
     ///
     /// Messages known to be redundant are filtered out: A `RegisterApplications` message whose
     /// entries are already known never needs to be included in a block.
-    async fn pending_messages(&self) -> Result<Vec<IncomingBundle>, ChainClientError> {
+    async fn pending_messages(
+        &self,
+        operations: &[Operation],
+    ) -> Result<Vec<IncomingBundle>, ChainClientError> {
         if self.state().next_block_height != BlockHeight::ZERO
             && self.options.message_policy.is_ignore()
         {
-            return Ok(Vec::new()); // OpenChain is already received, other are ignored.
+            return Ok(Vec::new()); // OpenChain is already received, others are ignored.
         }
+        let (epoch, committees) = self.epoch_and_committees(self.chain_id).await?;
+        let policy = epoch
+            .and_then(|epoch| committees.get(&epoch))
+            .ok_or_else(|| ChainError::InactiveChain(self.chain_id))?
+            .policy();
+        let max_transactions = policy.maximum_transactions_per_block()?;
+        let max_user_txn_size = policy.maximum_user_transaction_size_per_block()?;
+        let mut user_txn_size = operations.iter().map(Operation::user_bytes).sum::<usize>();
         let query = ChainInfoQuery::new(self.chain_id).with_pending_messages();
         let info = self
             .client
@@ -629,7 +640,9 @@ where
             return Ok(pending_messages); // Ignore messages other than OpenChain.
         }
         for mut message in requested_pending_messages {
-            if pending_messages.len() >= self.options.max_pending_messages {
+            if pending_messages.len() >= self.options.max_pending_messages
+                || operations.len() + pending_messages.len() >= max_transactions
+            {
                 warn!(
                     "Limiting block to {} incoming messages",
                     self.options.max_pending_messages
@@ -638,6 +651,10 @@ where
             }
             if !self.options.message_policy.handle(&mut message) {
                 continue;
+            }
+            user_txn_size += message.user_message_bytes();
+            if user_txn_size > max_user_txn_size {
+                break;
             }
             pending_messages.push(message);
         }
@@ -1902,7 +1919,7 @@ where
                 return Ok(ExecuteBlockOutcome::WaitForTimeout(timeout))
             }
         }
-        let incoming_bundles = self.pending_messages().await?;
+        let incoming_bundles = self.pending_messages(&operations).await?;
         let confirmed_value = self.set_pending_block(incoming_bundles, operations).await?;
         match self.process_pending_block_without_prepare().await? {
             ClientOutcome::Committed(Some(certificate))
@@ -2063,7 +2080,7 @@ where
         &self,
         owner: Option<Owner>,
     ) -> Result<(Amount, Option<Amount>), ChainClientError> {
-        let incoming_bundles = self.pending_messages().await?;
+        let incoming_bundles = self.pending_messages(&[]).await?;
         let timestamp = self.next_timestamp(&incoming_bundles).await;
         let block = Block {
             epoch: self.epoch().await?,
@@ -2694,7 +2711,7 @@ where
         self.prepare_chain().await?;
         let mut certificates = Vec::new();
         loop {
-            let incoming_bundles = self.pending_messages().await?;
+            let incoming_bundles = self.pending_messages(&[]).await?;
             if incoming_bundles.is_empty() {
                 return Ok((certificates, None));
             }
