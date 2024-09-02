@@ -150,6 +150,12 @@ pub enum ChainError {
         expected: CryptoHash,
         actual: CryptoHash,
     },
+    #[error("Block contains {actual:} transactions. The policy allows at most {maximum:}")]
+    TooManyTransactions { actual: usize, maximum: usize },
+    #[error(
+        "Block contains {actual:} bytes of transaction data. The policy allows at most {maximum:}"
+    )]
+    TooMuchTransactionData { actual: usize, maximum: usize },
 }
 
 #[derive(Copy, Clone, Debug)]

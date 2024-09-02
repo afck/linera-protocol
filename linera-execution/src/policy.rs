@@ -34,8 +34,11 @@ pub struct ResourceControlPolicy {
     /// The additional price for each byte in the argument of a user message.
     pub message_byte: Amount,
 
-    // TODO(#1538): Cap the number of transactions per block and the total size of their
-    // arguments.
+    /// The maximum number of transactions in a block.
+    pub maximum_transactions_per_block: u64,
+    /// The maximum size of user transaction data in a block, in bytes.
+    pub maximum_user_transaction_size_per_block: u64,
+
     /// The maximum data to read per block
     pub maximum_bytes_read_per_block: u64,
     /// The maximum data to write per block
@@ -56,6 +59,8 @@ impl Default for ResourceControlPolicy {
             operation_byte: Amount::default(),
             message: Amount::default(),
             message_byte: Amount::default(),
+            maximum_transactions_per_block: u64::MAX,
+            maximum_user_transaction_size_per_block: u64::MAX,
             maximum_bytes_read_per_block: u64::MAX,
             maximum_bytes_written_per_block: u64::MAX,
         }
@@ -118,6 +123,17 @@ impl ResourceControlPolicy {
     pub(crate) fn remaining_fuel(&self, balance: Amount) -> u64 {
         u64::try_from(balance.saturating_div(self.fuel_unit)).unwrap_or(u64::MAX)
     }
+
+    /// Returns the maximum number of transactions per block, as a `usize`.
+    pub fn maximum_transactions_per_block(&self) -> Result<usize, ArithmeticError> {
+        usize::try_from(self.maximum_transactions_per_block).map_err(|_| ArithmeticError::Overflow)
+    }
+
+    /// Returns the maximum size of user transaction data in a block, in bytes, as a `usize`.
+    pub fn maximum_user_transaction_size_per_block(&self) -> Result<usize, ArithmeticError> {
+        usize::try_from(self.maximum_user_transaction_size_per_block)
+            .map_err(|_| ArithmeticError::Overflow)
+    }
 }
 
 impl ResourceControlPolicy {
@@ -173,6 +189,8 @@ impl ResourceControlPolicy {
             operation_byte: Amount::from_nanos(10),
             operation: Amount::from_micros(10),
             message: Amount::from_micros(10),
+            maximum_transactions_per_block: 1_000,
+            maximum_user_transaction_size_per_block: 3_000,
             maximum_bytes_read_per_block: 100_000_000,
             maximum_bytes_written_per_block: 10_000_000,
         }

@@ -127,6 +127,25 @@ impl Block {
         let config = posted_message.message.matches_open_chain()?;
         Some((in_bundle, posted_message, config))
     }
+
+    /// Returns the total size of all user operation and message data in this block.
+    pub(crate) fn total_user_transaction_size(&self) -> usize {
+        let operation_bytes = self.operations.iter().map(|operation| match operation {
+            Operation::User { bytes, .. } => bytes.len(),
+            Operation::System(_) => 0,
+        });
+        let message_bytes = self.incoming_bundles.iter().flat_map(|bundle| {
+            bundle
+                .bundle
+                .messages
+                .iter()
+                .map(|posted_message| match &posted_message.message {
+                    Message::User { bytes, .. } => bytes.len(),
+                    Message::System(_) => 0,
+                })
+        });
+        operation_bytes.chain(message_bytes).sum()
+    }
 }
 
 /// A transaction in a block: incoming messages or an operation.

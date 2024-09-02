@@ -735,8 +735,25 @@ where
         let Some((_, committee)) = self.execution_state.system.current_committee() else {
             return Err(ChainError::InactiveChain(chain_id));
         };
+        let policy = committee.policy();
+        {
+            let actual = block.transactions().count();
+            let maximum = policy.maximum_transactions_per_block()?;
+            ensure!(
+                actual <= maximum,
+                ChainError::TooManyTransactions { actual, maximum }
+            );
+        }
+        {
+            let actual = block.total_user_transaction_size();
+            let maximum = policy.maximum_user_transaction_size_per_block()?;
+            ensure!(
+                actual <= maximum,
+                ChainError::TooMuchTransactionData { actual, maximum }
+            );
+        }
         let mut resource_controller = ResourceController {
-            policy: Arc::new(committee.policy().clone()),
+            policy: Arc::new(policy.clone()),
             tracker: ResourceTracker::default(),
             account: block.authenticated_signer,
         };

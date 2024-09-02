@@ -3,7 +3,7 @@
 
 #![allow(clippy::large_futures)]
 
-use std::{iter, sync::Arc};
+use std::{collections::BTreeMap, iter, sync::Arc};
 
 use assert_matches::assert_matches;
 use linera_base::{
@@ -15,11 +15,11 @@ use linera_base::{
     ownership::ChainOwnership,
 };
 use linera_execution::{
-    committee::{Committee, Epoch},
-    system::OpenChainConfig,
+    committee::{Committee, Epoch, ValidatorName, ValidatorState},
+    system::{OpenChainConfig, Recipient},
     test_utils::{ExpectedCall, MockApplication},
     ExecutionRuntimeConfig, ExecutionRuntimeContext, Message, MessageKind, Operation,
-    SystemMessage, TestExecutionRuntimeContext,
+    ResourceControlPolicy, SystemMessage, SystemOperation, TestExecutionRuntimeContext,
 };
 use linera_views::{
     context::Context as _,
@@ -184,4 +184,103 @@ async fn test_application_permissions() {
     application.expect_call(ExpectedCall::default_finalize());
     let valid_block = make_child_block(&value).with_operation(app_operation);
     chain.execute_block(&valid_block, time, None).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_block_limits() {
+    let time = Timestamp::from(0);
+    let message_id = make_admin_message_id(BlockHeight(3));
+    let chain_id = ChainId::child(message_id);
+    let mut chain = ChainStateView::new(chain_id).await;
+    let application_id = ApplicationId::from(&make_app_description());
+
+    // Initialize the chain.
+    let mut config = make_open_chain_config();
+    config.committees.insert(
+        Epoch(0),
+        Committee::new(
+            BTreeMap::from([(
+                ValidatorName(PublicKey::test_key(1)),
+                ValidatorState {
+                    network_address: PublicKey::test_key(1).to_string(),
+                    votes: 1,
+                },
+            )]),
+            ResourceControlPolicy {
+                maximum_transactions_per_block: 3,
+                maximum_user_transaction_size_per_block: 10,
+                ..ResourceControlPolicy::default()
+            },
+        ),
+    );
+
+    chain
+        .execute_init_message(message_id, &config, time, time)
+        .await
+        .unwrap();
+    let open_chain_bundle = IncomingBundle {
+        origin: Origin::chain(admin_id()),
+        bundle: MessageBundle {
+            certificate_hash: CryptoHash::test_hash("certificate"),
+            height: BlockHeight(1),
+            transaction_index: 0,
+            timestamp: time,
+            messages: vec![Message::System(SystemMessage::OpenChain(config))
+                .to_posted(0, MessageKind::Protected)],
+        },
+        action: MessageAction::Accept,
+    };
+    let sys_operation = Operation::System(SystemOperation::Transfer {
+        owner: None,
+        recipient: Recipient::root(3),
+        amount: Amount::ONE,
+        user_data: Default::default(),
+    });
+
+    let block = make_first_block(chain_id)
+        .with_incoming_bundle(open_chain_bundle.clone())
+        .with_operation(sys_operation.clone())
+        .with_operation(sys_operation.clone())
+        .with_operation(sys_operation);
+
+    assert_matches!(
+        chain.execute_block(&block, time, None).await,
+        Err(ChainError::TooManyTransactions {
+            actual: 4,
+            maximum: 3
+        })
+    );
+
+    let user_bundle_5bytes = IncomingBundle {
+        origin: Origin::chain(admin_id()),
+        bundle: MessageBundle {
+            certificate_hash: CryptoHash::test_hash("certificate"),
+            height: BlockHeight(1),
+            transaction_index: 0,
+            timestamp: time,
+            messages: vec![Message::User {
+                application_id,
+                bytes: b"12345".to_vec(),
+            }
+            .to_posted(0, MessageKind::Protected)],
+        },
+        action: MessageAction::Accept,
+    };
+    let user_operation_6bytes = Operation::User {
+        application_id,
+        bytes: b"123456".to_vec(),
+    };
+
+    let block = make_first_block(chain_id)
+        .with_incoming_bundle(open_chain_bundle)
+        .with_incoming_bundle(user_bundle_5bytes)
+        .with_operation(user_operation_6bytes);
+
+    assert_matches!(
+        chain.execute_block(&block, time, None).await,
+        Err(ChainError::TooMuchTransactionData {
+            actual: 11,
+            maximum: 10
+        })
+    );
 }
