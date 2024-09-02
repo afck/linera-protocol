@@ -727,6 +727,8 @@ ResourceControlPolicy:
         TYPENAME: Amount
     - message_byte:
         TYPENAME: Amount
+    - maximum_transactions_per_block: U64
+    - maximum_user_transaction_size_per_block: U64
     - maximum_bytes_read_per_block: U64
     - maximum_bytes_written_per_block: U64
 Round:

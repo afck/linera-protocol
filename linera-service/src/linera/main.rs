@@ -525,6 +525,8 @@ impl Runnable for Job {
                                     operation_byte,
                                     message,
                                     message_byte,
+                                    maximum_transactions_per_block,
+                                    maximum_user_transaction_size_per_block,
                                     maximum_bytes_read_per_block,
                                     maximum_bytes_written_per_block,
                                 } => {
@@ -560,6 +562,18 @@ impl Runnable for Job {
                                     }
                                     if let Some(message_byte) = message_byte {
                                         policy.message_byte = message_byte;
+                                    }
+                                    if let Some(maximum_transactions_per_block) =
+                                        maximum_transactions_per_block
+                                    {
+                                        policy.maximum_transactions_per_block =
+                                            maximum_transactions_per_block;
+                                    }
+                                    if let Some(maximum_user_transaction_size_per_block) =
+                                        maximum_user_transaction_size_per_block
+                                    {
+                                        policy.maximum_user_transaction_size_per_block =
+                                            maximum_user_transaction_size_per_block;
                                     }
                                     if let Some(maximum_bytes_read_per_block) =
                                         maximum_bytes_read_per_block
@@ -1274,6 +1288,8 @@ async fn run(options: &ClientOptions) -> anyhow::Result<()> {
             operation_byte_price,
             message_price,
             message_byte_price,
+            maximum_transactions_per_block,
+            maximum_user_transaction_size_per_block,
             maximum_bytes_read_per_block,
             maximum_bytes_written_per_block,
             testing_prng_seed,
@@ -1281,6 +1297,15 @@ async fn run(options: &ClientOptions) -> anyhow::Result<()> {
         } => {
             let committee_config: CommitteeConfig = util::read_json(committee_config_path)
                 .expect("Unable to read committee config file");
+            let maximum_transactions_per_block = match *maximum_transactions_per_block {
+                Some(value) => value,
+                None => u64::MAX,
+            };
+            let maximum_user_transaction_size_per_block =
+                match *maximum_user_transaction_size_per_block {
+                    Some(value) => value,
+                    None => u64::MAX,
+                };
             let maximum_bytes_read_per_block = match *maximum_bytes_read_per_block {
                 Some(value) => value,
                 None => u64::MAX,
@@ -1301,6 +1326,8 @@ async fn run(options: &ClientOptions) -> anyhow::Result<()> {
                 operation: *operation_price,
                 message_byte: *message_byte_price,
                 message: *message_price,
+                maximum_transactions_per_block,
+                maximum_user_transaction_size_per_block,
                 maximum_bytes_read_per_block,
                 maximum_bytes_written_per_block,
             };

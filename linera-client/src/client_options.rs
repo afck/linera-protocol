@@ -486,7 +486,7 @@ pub enum ClientCommand {
         #[arg(long)]
         byte_stored: Option<Amount>,
 
-        /// Set the base price of sending a operation from a block..
+        /// Set the base price of sending a operation from a block.
         #[arg(long)]
         operation: Option<Amount>,
 
@@ -494,13 +494,21 @@ pub enum ClientCommand {
         #[arg(long)]
         operation_byte: Option<Amount>,
 
-        /// Set the base price of sending a message from a block..
+        /// Set the base price of sending a message from a block.
         #[arg(long)]
         message: Option<Amount>,
 
         /// Set the additional price for each byte in the argument of a user message.
         #[arg(long)]
         message_byte: Option<Amount>,
+
+        /// Set the maximum number of transactions per block.
+        #[arg(long)]
+        maximum_transactions_per_block: Option<u64>,
+
+        /// Set the maximum size of user transactions per block.
+        #[arg(long)]
+        maximum_user_transaction_size_per_block: Option<u64>,
 
         /// Set the maximum read data per block.
         #[arg(long)]
@@ -607,6 +615,14 @@ pub enum ClientCommand {
         /// Set the additional price for each byte in the argument of a user message.
         #[arg(long, default_value = "0")]
         message_byte_price: Amount,
+
+        /// Set the maximum number of transactions per block.
+        #[arg(long)]
+        maximum_transactions_per_block: Option<u64>,
+
+        /// Set the maximum size of user transactions per block.
+        #[arg(long)]
+        maximum_user_transaction_size_per_block: Option<u64>,
 
         /// Set the maximum read data per block.
         #[arg(long)]

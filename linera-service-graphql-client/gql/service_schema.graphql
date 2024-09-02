@@ -857,6 +857,14 @@ input ResourceControlPolicy {
 	"""
 	messageByte: Amount!
 	"""
+	The maximum number of transactions in a block.
+	"""
+	maximumTransactionsPerBlock: Int!
+	"""
+	The maximum size of user transaction data in a block, in bytes.
+	"""
+	maximumUserTransactionSizePerBlock: Int!
+	"""
 	The maximum data to read per block
 	"""
 	maximumBytesReadPerBlock: Int!
