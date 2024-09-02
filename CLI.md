@@ -98,9 +98,6 @@ A Byzantine-fault tolerant sidechain with low-latency finality and high throughp
 * `--recv-timeout-ms <RECV_TIMEOUT>` — Timeout for receiving responses (milliseconds)
 
   Default value: `4000`
-* `--max-pending-messages <MAX_PENDING_MESSAGES>`
-
-  Default value: `10`
 * `--wasm-runtime <WASM_RUNTIME>` — The WebAssembly runtime to use
 * `--max-concurrent-queries <MAX_CONCURRENT_QUERIES>` — The maximal number of simultaneous queries to the database
 * `--max-stream-queries <MAX_STREAM_QUERIES>` — The maximal number of simultaneous stream queries to the database

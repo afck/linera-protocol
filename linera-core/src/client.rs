@@ -86,8 +86,6 @@ where
     /// Local node to manage the execution state and the local storage of the chains that we are
     /// tracking.
     local_node: LocalNodeClient<Storage>,
-    /// Maximum number of pending messages processed at a time in a block.
-    max_pending_messages: usize,
     /// The policy for automatically handling incoming messages.
     message_policy: MessagePolicy,
     /// Whether to block on cross-chain message delivery.
@@ -110,7 +108,6 @@ impl<P, S: Storage + Clone> Client<P, S> {
     pub fn new(
         validator_node_provider: P,
         storage: S,
-        max_pending_messages: usize,
         cross_chain_message_delivery: CrossChainMessageDelivery,
         tracked_chains: impl IntoIterator<Item = ChainId>,
         name: impl Into<String>,
@@ -126,7 +123,6 @@ impl<P, S: Storage + Clone> Client<P, S> {
             validator_node_provider,
             local_node,
             chains: DashMap::new(),
-            max_pending_messages,
             message_policy: MessagePolicy::new(BlanketMessagePolicy::Accept, None),
             cross_chain_message_delivery,
             tracked_chains,
@@ -194,7 +190,6 @@ impl<P, S: Storage + Clone> Client<P, S> {
             client: self.clone(),
             chain_id,
             options: ChainClientOptions {
-                max_pending_messages: self.max_pending_messages,
                 message_policy: self.message_policy.clone(),
                 cross_chain_message_delivery: self.cross_chain_message_delivery,
             },
@@ -292,8 +287,6 @@ pub struct ChainState {
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ChainClientOptions {
-    /// Maximum number of pending messages processed at a time in a block.
-    pub max_pending_messages: usize,
     /// The policy for automatically handling incoming messages.
     pub message_policy: MessagePolicy,
     /// Whether to block on cross-chain message delivery.
@@ -580,7 +573,7 @@ where
     }
 
     #[tracing::instrument(level = "trace")]
-    /// Obtains up to `self.options.max_pending_messages` pending messages for the local chain.
+    /// Obtains pending messages for the local chain, while respecting block limits.
     ///
     /// Messages known to be redundant are filtered out: A `RegisterApplications` message whose
     /// entries are already known never needs to be included in a block.
@@ -640,13 +633,8 @@ where
             return Ok(pending_messages); // Ignore messages other than OpenChain.
         }
         for mut message in requested_pending_messages {
-            if pending_messages.len() >= self.options.max_pending_messages
-                || operations.len() + pending_messages.len() >= max_transactions
-            {
-                warn!(
-                    "Limiting block to {} incoming messages",
-                    self.options.max_pending_messages
-                );
+            if operations.len() + pending_messages.len() >= max_transactions {
+                warn!("Limiting block to {max_transactions} transactions");
                 break;
             }
             if !self.options.message_policy.handle(&mut message) {
@@ -654,6 +642,7 @@ where
             }
             user_txn_size += message.user_message_bytes();
             if user_txn_size > max_user_txn_size {
+                warn!("Limiting block to {max_user_txn_size} bytes of user transaction data");
                 break;
             }
             pending_messages.push(message);
@@ -2047,7 +2036,7 @@ where
     /// incoming messages in a new block.
     ///
     /// Does not attempt to synchronize with validators. The result will reflect up to
-    /// `max_pending_messages` incoming messages and the execution fees for a single
+    /// `maximum_transactions_per_block` incoming messages and the execution fees for a single
     /// block.
     pub async fn query_balance(&self) -> Result<Amount, ChainClientError> {
         let (balance, _) = self.query_balances_with_owner(None).await?;
@@ -2059,7 +2048,7 @@ where
     /// incoming messages in a new block.
     ///
     /// Does not attempt to synchronize with validators. The result will reflect up to
-    /// `max_pending_messages` incoming messages and the execution fees for a single
+    /// `maximum_transactions_per_block` incoming messages and the execution fees for a single
     /// block.
     pub async fn query_owner_balance(&self, owner: Owner) -> Result<Amount, ChainClientError> {
         Ok(self
@@ -2074,7 +2063,7 @@ where
     /// staging the execution of incoming messages in a new block.
     ///
     /// Does not attempt to synchronize with validators. The result will reflect up to
-    /// `max_pending_messages` incoming messages and the execution fees for a single
+    /// `maximum_transactions_per_block` incoming messages and the execution fees for a single
     /// block.
     async fn query_balances_with_owner(
         &self,

@@ -86,9 +86,6 @@ pub struct ClientOptions {
     #[arg(long = "recv-timeout-ms", default_value = "4000", value_parser = util::parse_millis)]
     pub recv_timeout: Duration,
 
-    #[arg(long, default_value = "10")]
-    pub max_pending_messages: usize,
-
     /// The WebAssembly runtime to use.
     #[arg(long)]
     pub wasm_runtime: Option<WasmRuntime>,

@@ -140,7 +140,6 @@ where
         let client = Client::new(
             node_provider,
             storage,
-            options.max_pending_messages,
             delivery,
             wallet.chain_ids(),
             "Client node",

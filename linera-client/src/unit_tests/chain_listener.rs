@@ -149,7 +149,6 @@ async fn test_chain_listener() -> anyhow::Result<()> {
         client: Arc::new(Client::new(
             builder.make_node_provider(),
             storage.clone(),
-            10,
             delivery,
             [chain_id0],
             "Client node",

@@ -778,7 +778,6 @@ where
         let builder = Arc::new(Client::new(
             provider,
             storage,
-            10,
             CrossChainMessageDelivery::NonBlocking,
             [chain_id],
             format!("Client node for {:.8}", chain_id),
