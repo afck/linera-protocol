@@ -1092,7 +1092,9 @@ async fn test_wasm_end_to_end_non_fungible(config: impl LineraNetConfig) -> Resu
     .await;
 
     // Make sure that the cross-chain communication happens fast enough.
+    tracing::info!("PROCESS INBOX 2");
     assert_eq!(node_service2.process_inbox(&chain2).await?.len(), 1);
+    tracing::info!("PROCESS INBOX 1");
     assert_eq!(node_service1.process_inbox(&chain1).await?.len(), 1);
 
     // Checking the NFT is removed from chain2

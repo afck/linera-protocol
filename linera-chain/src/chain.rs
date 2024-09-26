@@ -570,6 +570,10 @@ where
             let mut inbox = self.inboxes.try_load_entry_mut(origin).await?;
             let entry = BundleInInbox::new(origin.clone(), &bundle);
             let skippable = bundle.is_skippable();
+            tracing::info!(
+                "Adding bundle {:.8} to inbox for {origin}",
+                bundle.certificate_hash,
+            );
             let newly_added = inbox
                 .add_bundle(bundle)
                 .await

@@ -431,6 +431,7 @@ where
             NetworkActions::default()
         };
         // Save the chain.
+        tracing::info!("Saving chain {:.8}", self.state.chain_id());
         self.save().await?;
         Ok(Some((last_updated_height, actions)))
     }

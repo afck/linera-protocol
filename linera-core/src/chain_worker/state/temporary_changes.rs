@@ -301,7 +301,14 @@ where
                         continue; // We are not subscribed to this channel.
                     }
                 }
+                tracing::info!(
+                    "Inbox {:.8} from {:.8}; next_cursor_to_add: {:?}",
+                    info.chain_id,
+                    origin.sender,
+                    inbox.next_cursor_to_add.get()
+                );
                 for bundle in inbox.added_bundles.elements().await? {
+                    tracing::info!("Bundle {}, {:.8}", bundle.height.0, bundle.certificate_hash);
                     messages.push(IncomingBundle {
                         origin: origin.clone(),
                         bundle: bundle.clone(),

@@ -190,6 +190,10 @@ where
                     bundle: previous_bundle
                 }
             );
+            tracing::info!(
+                "Removing skipped bundle {:.8} from inbox",
+                previous_bundle.certificate_hash
+            );
             self.added_bundles.delete_front();
             tracing::trace!("Skipping previously received bundle {:?}", previous_bundle);
         }
@@ -207,6 +211,10 @@ where
                         previous_bundle,
                         bundle: bundle.clone(),
                     }
+                );
+                tracing::info!(
+                    "Removing bundle {:.8} from inbox",
+                    previous_bundle.certificate_hash
                 );
                 self.added_bundles.delete_front();
                 tracing::trace!("Consuming bundle {:?}", bundle);
@@ -265,10 +273,12 @@ where
             }
             None => {
                 // Otherwise, schedule the messages for execution.
+                tracing::info!("Adding bundle {:.8} to inbox", bundle.certificate_hash);
                 self.added_bundles.push_back(bundle);
                 true
             }
         };
+        tracing::info!("Set next_cursor_to_add to {:?}", cursor.try_add_one()?);
         self.next_cursor_to_add.set(cursor.try_add_one()?);
         Ok(newly_added)
     }
