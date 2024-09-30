@@ -287,6 +287,7 @@ where
                 MessageAction::Accept
             };
             let subscriptions = &chain.execution_state.system.subscriptions;
+            tracing::info!("Loaded inbox pairs");
             for (origin, inbox) in pairs {
                 if let Medium::Channel(ChannelFullName {
                     application_id: GenericApplicationId::System,
@@ -334,6 +335,7 @@ where
         if let Some(start) = query.request_received_log_excluding_first_n {
             let start = usize::try_from(start).map_err(|_| ArithmeticError::Overflow)?;
             info.requested_received_log = chain.received_log.read(start..).await?;
+            tracing::info!("Sending received log: {:?}", info.requested_received_log);
         }
         if query.request_manager_values {
             info.manager.add_values(chain.manager.get());

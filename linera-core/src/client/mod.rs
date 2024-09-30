@@ -1137,6 +1137,7 @@ where
         let mut certificates = Vec::new();
         let mut new_tracker = tracker;
         for entry in info.requested_received_log {
+            tracing::info!("Entry {:?}", entry);
             let query = ChainInfoQuery::new(entry.chain_id)
                 .with_sent_certificate_hashes_in_range(BlockHeightRange::single(entry.height));
             let local_response = self
@@ -1152,12 +1153,14 @@ where
                 .requested_sent_certificate_hashes
                 .is_empty()
             {
+                tracing::info!("Already have entry.");
                 new_tracker += 1;
                 continue;
             }
 
             let mut info = remote_node.handle_chain_info_query(query).await?;
             let Some(certificate_hash) = info.requested_sent_certificate_hashes.pop() else {
+                tracing::info!("Failed to request hash.");
                 break;
             };
 
@@ -1357,6 +1360,12 @@ where
         certificate: Certificate,
         blobs: Vec<Blob>,
     ) -> Result<(), LocalNodeError> {
+        tracing::info!(
+            "Processing {:.8} at {} from {:.8}",
+            certificate.hash(),
+            certificate.value().height(),
+            certificate.value().chain_id()
+        );
         let info = self
             .client
             .handle_certificate(certificate, blobs)

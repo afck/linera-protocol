@@ -232,6 +232,7 @@ where
         certificate: Certificate,
         blobs: &[Blob],
     ) -> Result<(ChainInfoResponse, NetworkActions), WorkerError> {
+        tracing::info!("Processing {:.8}", certificate.hash());
         let CertificateValue::ConfirmedBlock { executed_block, .. } = certificate.value() else {
             panic!("Expecting a confirmation certificate");
         };
@@ -245,6 +246,7 @@ where
         }
         if tip.next_block_height > block.height {
             // Block was already confirmed.
+            tracing::info!("Already confirmed.");
             let info = ChainInfoResponse::new(&self.state.chain, self.state.config.key_pair());
             let actions = self.state.create_network_actions().await?;
             return Ok((info, actions));
@@ -365,6 +367,11 @@ where
             .insert(Cow::Owned(certificate.value))
             .await;
 
+        tracing::info!(
+            "Cross-chain from process_confirmed_block: {:?}",
+            actions.cross_chain_requests
+        );
+
         Ok((info, actions))
     }
 
@@ -374,6 +381,7 @@ where
         origin: Origin,
         bundles: Vec<(Epoch, MessageBundle)>,
     ) -> Result<Option<(BlockHeight, NetworkActions)>, WorkerError> {
+        tracing::info!("Processing bundles {:?}", bundles);
         // Only process certificates with relevant heights and epochs.
         let next_height_to_receive = self
             .state

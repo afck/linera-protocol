@@ -420,11 +420,13 @@ where
         blobs: Vec<Blob>,
         mut notifications: Option<&mut impl Extend<Notification>>,
     ) -> Result<ChainInfoResponse, WorkerError> {
+        tracing::info!("Handling certificate");
         let (response, actions) = self.handle_certificate(certificate, blobs, None).await?;
         if let Some(ref mut notifications) = notifications {
             notifications.extend(actions.notifications);
         }
         let mut requests = VecDeque::from(actions.cross_chain_requests);
+        tracing::info!("Cross-chain requests: {:?}", requests);
         while let Some(request) = requests.pop_front() {
             let actions = self.handle_cross_chain_request(request).await?;
             requests.extend(actions.cross_chain_requests);
@@ -528,6 +530,7 @@ where
         let chain_id = executed_block.block.chain_id;
         let height = executed_block.block.height;
 
+        tracing::info!("Querying chain worker");
         let (response, actions) = self
             .query_chain_worker(chain_id, move |callback| {
                 ChainWorkerRequest::ProcessConfirmedBlock {
@@ -536,7 +539,12 @@ where
                     callback,
                 }
             })
-            .await?;
+            .await
+            .map_err(|error| {
+                tracing::error!("{error:?}");
+                error
+            })?;
+        tracing::info!("Registering notifier");
 
         self.register_delivery_notifier(
             chain_id,
@@ -545,6 +553,10 @@ where
             notify_when_messages_are_delivered,
         )
         .await;
+        tracing::info!(
+            "Cross-chain from WorkerState::process_confirmed_block: {:?}",
+            actions.cross_chain_requests
+        );
 
         #[cfg(with_metrics)]
         NUM_BLOCKS.with_label_values(&[]).inc();
@@ -893,6 +905,7 @@ where
                 recipient,
                 bundle_vecs,
             } => {
+                tracing::info!("About to process: {:?}", bundle_vecs);
                 let mut height_by_origin = Vec::new();
                 let mut actions = NetworkActions::default();
                 for (medium, bundles) in bundle_vecs {
