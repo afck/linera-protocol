@@ -186,7 +186,6 @@ query Chain(
         }
       }
     }
-    outboxCounters
     channels {
       keys
       entries(input: $channelsInput) {

@@ -219,11 +219,6 @@ type ChainStateExtendedView {
 	"""
 	outboxes: ReentrantCollectionView_Target_OutboxStateView_2789119133!
 	"""
-	Number of outgoing messages in flight for each block height.
-	We use a `RegisterView` to prioritize speed for small maps.
-	"""
-	outboxCounters: JSONObject!
-	"""
 	Channels able to multicast messages to subscribers.
 	"""
 	channels: ReentrantCollectionView_ChannelFullName_ChannelStateView_629706216!

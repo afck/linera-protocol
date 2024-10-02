@@ -267,9 +267,6 @@ where
     pub removed_unskippable_bundles: SetView<C, BundleInInbox>,
     /// Mailboxes used to send messages, indexed by their target.
     pub outboxes: ReentrantCollectionView<C, Target, OutboxStateView<C>>,
-    /// Number of outgoing messages in flight for each block height.
-    /// We use a `RegisterView` to prioritize speed for small maps.
-    pub outbox_counters: RegisterView<C, BTreeMap<BlockHeight, u32>>,
     /// Channels able to multicast messages to subscribers.
     pub channels: ReentrantCollectionView<C, ChannelFullName, ChannelStateView<C>>,
 }
@@ -417,39 +414,10 @@ where
         if updates.is_empty() {
             return Ok(false);
         }
-        for update in updates {
-            let counter = self
-                .outbox_counters
-                .get_mut()
-                .get_mut(&update)
-                .expect("message counter should be present");
-            *counter = counter
-                .checked_sub(1)
-                .expect("message counter should not underflow");
-            if *counter == 0 {
-                // Important for the test in `all_messages_delivered_up_to`.
-                self.outbox_counters.get_mut().remove(&update);
-            }
-        }
         if outbox.queue.count() == 0 {
             self.outboxes.remove_entry(target)?;
         }
         Ok(true)
-    }
-
-    /// Returns true if there are no more outgoing messages in flight up to the given
-    /// block height.
-    pub fn all_messages_delivered_up_to(&mut self, height: BlockHeight) -> bool {
-        tracing::debug!(
-            "Messages left in {:.8}'s outbox: {:?}",
-            self.chain_id(),
-            self.outbox_counters.get()
-        );
-        if let Some((key, _)) = self.outbox_counters.get().first_key_value() {
-            key > &height
-        } else {
-            true
-        }
     }
 
     /// Invariant for the states of active chains.
@@ -1143,16 +1111,13 @@ where
         }
 
         // Update the (regular) outboxes.
-        let outbox_counters = self.outbox_counters.get_mut();
         let targets = recipients
             .into_iter()
             .map(Target::chain)
             .collect::<Vec<_>>();
         let outboxes = self.outboxes.try_load_entries_mut(&targets).await?;
         for mut outbox in outboxes {
-            if outbox.schedule_message(height)? {
-                *outbox_counters.entry(height).or_default() += 1;
-            }
+            outbox.schedule_message(height)?;
         }
 
         // Update the channels.
@@ -1182,11 +1147,8 @@ where
         let infos = stream.try_collect::<Vec<_>>().await?;
         let targets = infos.into_iter().flatten().collect::<Vec<_>>();
         let outboxes = self.outboxes.try_load_entries_mut(&targets).await?;
-        let outbox_counters = self.outbox_counters.get_mut();
         for mut outbox in outboxes {
-            if outbox.schedule_message(height)? {
-                *outbox_counters.entry(height).or_default() += 1;
-            }
+            outbox.schedule_message(height)?;
         }
 
         self.process_subscribes(raw_outcome.subscribe, application_id)
@@ -1238,11 +1200,9 @@ where
         let (targets, heights): (Vec<_>, Vec<_>) = infos.into_iter().flatten().unzip();
         let mut new_outbox_entries = false;
         let outboxes = self.outboxes.try_load_entries_mut(&targets).await?;
-        let outbox_counters = self.outbox_counters.get_mut();
         for (heights, mut outbox) in heights.into_iter().zip(outboxes) {
             for height in heights {
                 if outbox.schedule_message(height)? {
-                    *outbox_counters.entry(height).or_default() += 1;
                     new_outbox_entries = true;
                 }
             }
