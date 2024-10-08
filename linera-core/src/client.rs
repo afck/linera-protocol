@@ -1066,7 +1066,7 @@ where
 
     #[tracing::instrument(
         level = "trace",
-        skip(tracker, committees, max_epoch, node, node_client)
+        skip(tracker, _committees, _max_epoch, node, node_client)
     )]
     /// Downloads and processes all confirmed block certificates that sent any message to this
     /// chain, including their ancestors.
@@ -1074,8 +1074,8 @@ where
         chain_id: ChainId,
         name: ValidatorName,
         tracker: u64,
-        committees: BTreeMap<Epoch, Committee>,
-        max_epoch: Epoch,
+        _committees: BTreeMap<Epoch, Committee>,
+        _max_epoch: Epoch,
         node: impl LocalValidatorNode,
         node_client: LocalNodeClient<S>,
     ) -> Result<(ValidatorName, u64, Vec<Certificate>), NodeError> {
@@ -1111,43 +1111,8 @@ where
             };
 
             let certificate = node.download_certificate(certificate_hash).await?;
-            let CertificateValue::ConfirmedBlock { executed_block, .. } = certificate.value()
-            else {
-                return Err(NodeError::InvalidChainInfoResponse);
-            };
-            let block = &executed_block.block;
-            // Check that certificates are valid w.r.t one of our trusted committees.
-            if block.epoch > max_epoch {
-                // We don't accept a certificate from a committee in the future.
-                warn!(
-                    "Postponing received certificate from {:.8} at height {} from future epoch {}",
-                    entry.chain_id, entry.height, block.epoch
-                );
-                // Stop the synchronization here. Do not increment the tracker further so
-                // that this certificate can still be downloaded later, once our committee
-                // is updated.
-                break;
-            }
-            match committees.get(&block.epoch) {
-                Some(committee) => {
-                    // This epoch is recognized by our chain. Let's verify the
-                    // certificate.
-                    certificate.check(committee)?;
-                    certificates.push(certificate);
-                    new_tracker += 1;
-                }
-                None => {
-                    // This epoch is not recognized any more. Let's skip the certificate.
-                    // If a higher block with a recognized epoch comes up later from the
-                    // same chain, the call to `receive_certificate` below will download
-                    // the skipped certificate again.
-                    warn!(
-                        "Skipping received certificate from past epoch {:?}",
-                        block.epoch
-                    );
-                    new_tracker += 1;
-                }
-            }
+            certificates.push(certificate);
+            new_tracker += 1;
         }
         Ok((name, new_tracker, certificates))
     }
