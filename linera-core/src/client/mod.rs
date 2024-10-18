@@ -293,13 +293,25 @@ where
         chain_id: ChainId,
         height: BlockHeight,
     ) -> Result<Box<ChainInfo>, LocalNodeError> {
-        let mut notifications = Vec::<Notification>::new();
-        let info = self
-            .local_node
-            .download_certificates(nodes, chain_id, height, &mut notifications)
-            .await?;
-        self.notifier.handle_notifications(&notifications);
-        Ok(info)
+        let local_node = self.local_node.clone();
+        let notifier = self.notifier.clone();
+        let nodes: Vec<_> = nodes.to_vec();
+        match tokio::spawn(async move {
+            let mut notifications = Vec::<Notification>::new();
+            let info = local_node
+                .download_certificates(&nodes, chain_id, height, &mut notifications)
+                .await?;
+            notifier.handle_notifications(&notifications);
+            Ok(info)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::error!("{error}");
+                Err(LocalNodeError::InvalidChainInfoResponse)
+            }
+        }
     }
 
     async fn try_process_certificates(
@@ -308,13 +320,25 @@ where
         chain_id: ChainId,
         certificates: Vec<Certificate>,
     ) -> Option<Box<ChainInfo>> {
-        let mut notifications = Vec::<Notification>::new();
-        let result = self
-            .local_node
-            .try_process_certificates(remote_node, chain_id, certificates, &mut notifications)
-            .await;
-        self.notifier.handle_notifications(&notifications);
-        result
+        let local_node = self.local_node.clone();
+        let notifier = self.notifier.clone();
+        let remote_node = remote_node.clone();
+        match tokio::spawn(async move {
+            let mut notifications = Vec::<Notification>::new();
+            let result = local_node
+                .try_process_certificates(&remote_node, chain_id, certificates, &mut notifications)
+                .await;
+            notifier.handle_notifications(&notifications);
+            result
+        })
+        .await
+        {
+            Ok(info) => info,
+            Err(error) => {
+                tracing::error!("{error}");
+                None
+            }
+        }
     }
 
     async fn handle_certificate(
@@ -322,13 +346,24 @@ where
         certificate: Certificate,
         blobs: Vec<Blob>,
     ) -> Result<ChainInfoResponse, LocalNodeError> {
-        let mut notifications = Vec::<Notification>::new();
-        let result = self
-            .local_node
-            .handle_certificate(certificate, blobs, &mut notifications)
-            .await;
-        self.notifier.handle_notifications(&notifications);
-        result
+        let local_node = self.local_node.clone();
+        let notifier = self.notifier.clone();
+        match tokio::spawn(async move {
+            let mut notifications = Vec::<Notification>::new();
+            let result = local_node
+                .handle_certificate(certificate, blobs, &mut notifications)
+                .await;
+            notifier.handle_notifications(&notifications);
+            result
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::error!("{error}");
+                Err(LocalNodeError::InvalidChainInfoResponse)
+            }
+        }
     }
 }
 
@@ -1454,22 +1489,23 @@ where
         #[cfg(with_metrics)]
         let _latency = metrics::SYNCHRONIZE_CHAIN_STATE_LATENCY.measure_latency();
 
-        let mut futures = vec![];
+        let committee = self.local_committee().await?;
 
-        for remote_node in validators {
-            let client = self.clone();
-            futures.push(async move {
-                client
-                    .try_synchronize_chain_state_from(remote_node, chain_id)
-                    .await
-            });
-        }
-
-        for result in future::join_all(futures).await {
-            if let Err(e) = result {
-                error!(?e, "Error synchronizing chain state");
-            }
-        }
+        communicate_with_quorum(
+            validators,
+            &committee,
+            |_: &()| (),
+            |remote_node| {
+                let client = self.clone();
+                async move {
+                    client
+                        .try_synchronize_chain_state_from(&remote_node, chain_id)
+                        .await
+                        .map_err(|_| NodeError::InvalidChainInfoResponse)
+                }
+            },
+        )
+        .await?;
 
         self.client
             .local_node
