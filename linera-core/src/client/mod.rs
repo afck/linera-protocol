@@ -615,6 +615,7 @@ impl<P, S> ChainClient<P, S>
 where
     P: ValidatorNodeProvider + Sync + 'static,
     S: Storage + Clone + Send + Sync + 'static,
+    P::Node: Clone,
 {
     /// Obtains a `ChainStateView` for a given `ChainId`.
     #[tracing::instrument(level = "trace")]
@@ -1133,75 +1134,104 @@ where
         // Retrieve newly received certificates from this validator.
         let query = ChainInfoQuery::new(chain_id).with_received_log_excluding_first_n(tracker);
         let info = remote_node.handle_chain_info_query(query).await?;
-        let mut certificates: Vec<Certificate> = Vec::new();
-        let mut new_tracker = tracker;
+        let log = info.requested_received_log;
+        let mut new_tracker = tracker + log.len() as u64;
 
-        for entry in info.requested_received_log {
-            let query = ChainInfoQuery::new(entry.chain_id)
-                .with_sent_certificate_hashes_in_range(BlockHeightRange::single(entry.height));
+        let mut stream = stream::iter(log.into_iter().zip(tracker..)).map(|(entry, index)| {
+            let remote_node = remote_node.clone();
+            let committees = committees.clone();
 
-            let local_response = self
-                .client
-                .local_node
-                .handle_chain_info_query(query.clone())
-                .await
-                .map_err(|error| NodeError::LocalNodeQuery {
-                    error: error.to_string(),
-                })?
-                .info;
-            if !local_response.requested_sent_certificate_hashes.is_empty() {
-                // We've already processed incoming messages for this certificate.
-                new_tracker += 1;
-                continue;
-            }
+            async move {
+                let query = ChainInfoQuery::new(entry.chain_id)
+                    .with_sent_certificate_hashes_in_range(BlockHeightRange::single(entry.height));
 
-            let remote_response = remote_node.handle_chain_info_query(query).await?;
-            let certificate_hash =
-                match remote_response.requested_sent_certificate_hashes.as_slice() {
-                    &[hash] => hash,
-                    [] => {
-                        warn!("Validator didn't have certificate he claimed to have.");
-                        break;
+                let local_response = match self
+                    .client
+                    .local_node
+                    .handle_chain_info_query(query.clone())
+                    .await {
+                    Err(error) => {
+                        warn!("Failed to get chain info from the local node: {error}");
+                        return (None, Some(index));
                     }
-                    _ => {
-                        error!("Validator sent more than one certificate hash for a single block.");
-                        return Err(NodeError::InvalidChainInfoResponse);
-                    }
+                    Ok(response) => response.info,
                 };
-
-            let certificate = remote_node
-                .node
-                .download_certificate(certificate_hash)
-                .await?;
-
-            match self
-                .check_certificate(max_epoch, &committees, &certificate)
-                .await?
-            {
-                HandleCertificateResult::FutureEpoch => {
-                    warn!("Postponing received certificate from {:.8} at height {} from future epoch {}",
-                          entry.chain_id, entry.height, certificate.value().epoch());
-                    // Stop the synchronization here. Do not increment the tracker further so
-                    // that this certificate can still be downloaded later, once our committee
-                    // is updated.
-                    break;
+                if !local_response.requested_sent_certificate_hashes.is_empty() {
+                    // We've already processed incoming messages for this certificate.
+                    return (None, None);
                 }
-                HandleCertificateResult::OldEpoch => {
-                    // This epoch is not recognized any more. Let's skip the certificate.
-                    // If a higher block with a recognized epoch comes up later from the
-                    // same chain, the call to `receive_certificate` below will download
-                    // the skipped certificate again.
-                    warn!(
-                        "Skipping received certificate from past epoch {:?}",
-                        certificate.value().epoch()
-                    );
-                    new_tracker += 1;
-                }
-                HandleCertificateResult::New => {
-                    certificates.push(certificate);
-                    new_tracker += 1;
+
+                let remote_response = match remote_node.handle_chain_info_query(query).await {
+                    Err(error) => {
+                        warn!("Failed to get chain info from the remote node: {error}");
+                        return (None, Some(index));
+                    }
+                    Ok(info) => info,
+                };
+                let certificate_hash =
+                    match remote_response.requested_sent_certificate_hashes.as_slice() {
+                        &[hash] => hash,
+                        [] => {
+                            warn!("Validator didn't have certificate he claimed to have.");
+                            return (None, Some(index));
+                        }
+                        _ => {
+                            error!("Validator sent more than one certificate hash for a single block.");
+                            return (None, Some(index));
+                        }
+                    };
+
+                let certificate = match remote_node
+                    .node
+                    .download_certificate(certificate_hash)
+                    .await {
+                        Err(error) => {
+                            warn!("Failed to download certificate: {error}");
+                            return (None, Some(index));
+                        }
+                        Ok(info) =>  info,
+                    };
+
+                match self
+                    .check_certificate(max_epoch, &committees, &certificate)
+                    .await
+                {
+                    Err(error) => {
+                        warn!("Could not verify certificate: {error}");
+                        (None, Some(index))
+                    }
+                    Ok(HandleCertificateResult::FutureEpoch) => {
+                        warn!("Postponing received certificate from {:.8} at height {} from future epoch {}",
+                              entry.chain_id, entry.height, certificate.value().epoch());
+                        // Stop the synchronization here. Do not increment the tracker further so
+                        // that this certificate can still be downloaded later, once our committee
+                        // is updated.
+                        (None, Some(index))
+                    }
+                    Ok(HandleCertificateResult::OldEpoch) => {
+                        // This epoch is not recognized any more. Let's skip the certificate.
+                        // If a higher block with a recognized epoch comes up later from the
+                        // same chain, the call to `receive_certificate` below will download
+                        // the skipped certificate again.
+                        warn!(
+                            "Skipping received certificate from past epoch {:?}",
+                            certificate.value().epoch()
+                        );
+                        (None, None)
+                    }
+                    Ok(HandleCertificateResult::New) => {
+                        (Some(certificate), None)
+                    }
                 }
             }
+        })
+        .buffer_unordered(100);
+        let mut certificates = Vec::new();
+        while let Some((maybe_certificate, maybe_index)) = stream.next().await {
+            if let Some(index) = maybe_index {
+                new_tracker = new_tracker.min(index);
+            }
+            certificates.extend(maybe_certificate);
         }
         Ok((remote_node.name, new_tracker, certificates))
     }
