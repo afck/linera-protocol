@@ -25,7 +25,7 @@ use linera_storage::Storage;
 use linera_views::views::ViewError;
 use rand::{prelude::SliceRandom, thread_rng};
 use thiserror::Error;
-use tokio::sync::OwnedRwLockReadGuard;
+use tokio::sync::{oneshot, OwnedRwLockReadGuard};
 use tracing::warn;
 
 use crate::{
@@ -169,7 +169,7 @@ where
         query: ChainInfoQuery,
     ) -> Result<ChainInfoResponse, LocalNodeError> {
         // In local nodes, we can trust fully_handle_certificate to carry all actions eventually.
-        let (response, _actions) = self.node.state.handle_chain_info_query(query).await?;
+        let (response, _actions) = self.node.state.handle_chain_info_query(query, None).await?;
         Ok(response)
     }
 }
@@ -207,6 +207,18 @@ where
     ) -> Result<(ExecutedBlock, ChainInfoResponse), LocalNodeError> {
         let (executed_block, info) = self.node.state.stage_block_execution(block).await?;
         Ok((executed_block, info))
+    }
+
+    pub async fn wait_for_message_delivery(&self, chain_id: ChainId) -> Result<(), LocalNodeError> {
+        let (sender, receiver) = oneshot::channel();
+        self.node
+            .state
+            .handle_chain_info_query(ChainInfoQuery::new(chain_id), Some(sender))
+            .await?;
+        if let Err(error) = receiver.await {
+            tracing::error!("Failed to wait for message delivery on {chain_id:.8}: {error}");
+        }
+        Ok(())
     }
 
     // Given a list of missing `BlobId`s and a `Certificate` for a block:
@@ -550,7 +562,7 @@ where
         let (_response, actions) = self
             .node
             .state
-            .handle_chain_info_query(ChainInfoQuery::new(sender_chain))
+            .handle_chain_info_query(ChainInfoQuery::new(sender_chain), None)
             .await?;
         let mut requests = VecDeque::from_iter(actions.cross_chain_requests);
         while let Some(request) = requests.pop_front() {

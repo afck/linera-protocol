@@ -1906,7 +1906,7 @@ where
         assert_eq!(recipient_chain.received_log.count(), 1);
     }
     let query = ChainInfoQuery::new(ChainId::root(2)).with_received_log_excluding_first_n(0);
-    let (response, _actions) = worker.handle_chain_info_query(query).await?;
+    let (response, _actions) = worker.handle_chain_info_query(query, None).await?;
     assert_eq!(response.info.requested_received_log.len(), 1);
     assert_eq!(
         response.info.requested_received_log[0],
@@ -3143,7 +3143,7 @@ where
 
     // The round hasn't timed out yet, so the validator won't sign a leader timeout vote yet.
     let query = ChainInfoQuery::new(chain_id).with_timeout();
-    let (response, _) = worker.handle_chain_info_query(query).await?;
+    let (response, _) = worker.handle_chain_info_query(query, None).await?;
     assert!(response.info.manager.timeout_vote.is_none());
 
     // Set the clock to the end of the round.
@@ -3151,7 +3151,7 @@ where
 
     // Now the validator will sign a leader timeout vote.
     let query = ChainInfoQuery::new(chain_id).with_timeout();
-    let (response, _) = worker.handle_chain_info_query(query).await?;
+    let (response, _) = worker.handle_chain_info_query(query, None).await?;
     let vote = response.info.manager.timeout_vote.clone().unwrap();
     let value_timeout =
         HashedCertificateValue::new_timeout(chain_id, BlockHeight::from(1), Epoch::from(0));
@@ -3216,7 +3216,9 @@ where
         make_certificate_with_round(&committee, &worker, value2.clone(), Round::SingleLeader(2));
     worker.handle_certificate(certificate, vec![], None).await?;
     let query_values = ChainInfoQuery::new(chain_id).with_manager_values();
-    let (response, _) = worker.handle_chain_info_query(query_values.clone()).await?;
+    let (response, _) = worker
+        .handle_chain_info_query(query_values.clone(), None)
+        .await?;
     assert_eq!(
         response.info.manager.requested_locked,
         Some(Box::new(certificate1))
@@ -3242,7 +3244,9 @@ where
     );
     let lite_value2 = value2.lite();
     let (_, _) = worker.handle_block_proposal(proposal).await?;
-    let (response, _) = worker.handle_chain_info_query(query_values.clone()).await?;
+    let (response, _) = worker
+        .handle_chain_info_query(query_values.clone(), None)
+        .await?;
     assert_eq!(
         response.info.manager.requested_locked,
         Some(Box::new(certificate2))
@@ -3287,7 +3291,7 @@ where
     worker
         .handle_certificate(certificate.clone(), vec![], None)
         .await?;
-    let (response, _) = worker.handle_chain_info_query(query_values).await?;
+    let (response, _) = worker.handle_chain_info_query(query_values, None).await?;
     assert_eq!(
         response.info.manager.requested_locked,
         Some(Box::new(certificate))
@@ -3346,7 +3350,7 @@ where
 
     // The round hasn't timed out yet, so the validator won't sign a leader timeout vote yet.
     let query = ChainInfoQuery::new(chain_id).with_timeout();
-    let (response, _) = worker.handle_chain_info_query(query).await?;
+    let (response, _) = worker.handle_chain_info_query(query, None).await?;
     assert!(response.info.manager.timeout_vote.is_none());
 
     // Set the clock to the end of the round.
@@ -3354,7 +3358,7 @@ where
 
     // Now the validator will sign a leader timeout vote.
     let query = ChainInfoQuery::new(chain_id).with_timeout();
-    let (response, _) = worker.handle_chain_info_query(query).await?;
+    let (response, _) = worker.handle_chain_info_query(query, None).await?;
     let vote = response.info.manager.timeout_vote.clone().unwrap();
     let value_timeout =
         HashedCertificateValue::new_timeout(chain_id, BlockHeight::from(1), Epoch::from(0));
@@ -3377,7 +3381,7 @@ where
         .into_proposal_with_round(&key_pairs[1], Round::MultiLeader(1));
     let _ = worker.handle_block_proposal(proposal1).await?;
     let query_values = ChainInfoQuery::new(chain_id).with_manager_values();
-    let (response, _) = worker.handle_chain_info_query(query_values).await?;
+    let (response, _) = worker.handle_chain_info_query(query_values, None).await?;
     assert_eq!(response.info.manager.current_round, Round::MultiLeader(1));
     Ok(())
 }
@@ -3473,7 +3477,7 @@ where
     let lite_value2 = value2.lite();
     let (_, _) = worker.handle_block_proposal(proposal).await?;
     let query_values = ChainInfoQuery::new(chain_id).with_manager_values();
-    let (response, _) = worker.handle_chain_info_query(query_values).await?;
+    let (response, _) = worker.handle_chain_info_query(query_values, None).await?;
     assert_eq!(
         response.info.manager.requested_locked,
         Some(Box::new(certificate2))
@@ -3503,7 +3507,7 @@ where
 
     // At time 0 we don't vote for fallback mode.
     let query = ChainInfoQuery::new(chain_id).with_fallback();
-    let (response, _) = worker.handle_chain_info_query(query.clone()).await?;
+    let (response, _) = worker.handle_chain_info_query(query.clone(), None).await?;
     let manager = response.info.manager;
     assert!(manager.fallback_vote.is_none());
     assert_eq!(manager.current_round, Round::Fast);
@@ -3512,7 +3516,7 @@ where
 
     // Even if a long time passes: Without an incoming message there's no fallback mode.
     clock.add(fallback_duration);
-    let (response, _) = worker.handle_chain_info_query(query.clone()).await?;
+    let (response, _) = worker.handle_chain_info_query(query.clone(), None).await?;
     assert!(response.info.manager.fallback_vote.is_none());
 
     // Make a tracked message to ourselves. It's in the inbox now.
@@ -3523,12 +3527,12 @@ where
     worker.fully_handle_certificate(certificate, vec![]).await?;
 
     // The message only just arrived: No fallback mode.
-    let (response, _) = worker.handle_chain_info_query(query.clone()).await?;
+    let (response, _) = worker.handle_chain_info_query(query.clone(), None).await?;
     assert!(response.info.manager.fallback_vote.is_none());
 
     // If for a long time the message isn't handled, we vote for fallback mode.
     clock.add(fallback_duration);
-    let (response, _) = worker.handle_chain_info_query(query.clone()).await?;
+    let (response, _) = worker.handle_chain_info_query(query.clone(), None).await?;
     let vote = response.info.manager.fallback_vote.unwrap();
     let value = HashedCertificateValue::new_timeout(chain_id, BlockHeight(1), Epoch::ZERO);
     let round = Round::SingleLeader(u32::MAX);
@@ -3538,7 +3542,7 @@ where
     worker.fully_handle_certificate(certificate, vec![]).await?;
 
     // Now we are in fallback mode, and the validator is the leader.
-    let (response, _) = worker.handle_chain_info_query(query.clone()).await?;
+    let (response, _) = worker.handle_chain_info_query(query.clone(), None).await?;
     let manager = response.info.manager;
     let validator_key = worker.public_key();
     assert_eq!(manager.current_round, Round::Validator(0));

@@ -890,9 +890,6 @@ where
             );
         }
         if self.state().has_other_owners(&info.manager.ownership) {
-            let mutex = self.state().client_mutex();
-            let _guard = mutex.lock_owned().await;
-
             // For chains with any owner other than ourselves, we could be missing recent
             // certificates created by other owners. Further synchronize blocks from the network.
             // This is a best-effort that depends on network conditions.
@@ -1117,12 +1114,21 @@ where
 
     /// Downloads and processes all confirmed block certificates that sent any message to this
     /// chain, including their ancestors.
+    #[allow(clippy::type_complexity)]
     #[tracing::instrument(level = "trace")]
     async fn synchronize_received_certificates_from_validator(
         &self,
         chain_id: ChainId,
         remote_node: &RemoteNode<P::Node>,
-    ) -> Result<(ValidatorName, u64, Vec<Certificate>), NodeError> {
+    ) -> Result<
+        (
+            ValidatorName,
+            u64,
+            Vec<Certificate>,
+            HashMap<ChainId, BlockHeight>,
+        ),
+        NodeError,
+    > {
         let tracker = self
             .state()
             .received_certificate_trackers()
@@ -1138,6 +1144,7 @@ where
         let info = remote_node.handle_chain_info_query(query).await?;
         let mut certificates: Vec<Certificate> = Vec::new();
         let mut new_tracker = tracker;
+        let mut sender_heights = HashMap::<ChainId, BlockHeight>::new();
 
         for entry in info.requested_received_log {
             let query = ChainInfoQuery::new(entry.chain_id)
@@ -1154,6 +1161,10 @@ where
                 .info;
             if !local_response.requested_sent_certificate_hashes.is_empty() {
                 // We've already processed incoming messages for this certificate.
+                sender_heights
+                    .entry(entry.chain_id)
+                    .and_modify(|h| *h = (*h).max(entry.height))
+                    .or_insert(entry.height);
                 new_tracker += 1;
                 continue;
             }
@@ -1206,7 +1217,7 @@ where
                 }
             }
         }
-        Ok((remote_node.name, new_tracker, certificates))
+        Ok((remote_node.name, new_tracker, certificates, sender_heights))
     }
 
     async fn check_certificate(
@@ -1307,10 +1318,18 @@ where
                 return Err(error.into());
             }
         };
-        for (name, tracker, certificates) in responses {
+        let mut sender_heights = Vec::new();
+        for (name, tracker, certificates, heights) in responses {
+            sender_heights.extend(heights);
             // Process received certificates.
             self.receive_certificates_from_validator(name, tracker, certificates)
                 .await;
+        }
+        for (chain_id, _) in sender_heights {
+            self.client
+                .local_node
+                .wait_for_message_delivery(chain_id)
+                .await?;
         }
         Ok(())
     }
@@ -3076,16 +3095,12 @@ where
         &self,
         remote_node: RemoteNode<P::Node>,
     ) -> Result<(), ChainClientError> {
-        let mutex = self.state().client_mutex();
-        let _guard = mutex.lock_owned().await;
-
         let chain_id = self.chain_id;
         // Proceed to downloading received certificates.
-        let (name, tracker, certificates) = self
+        let (name, tracker, certificates, _) = self
             .synchronize_received_certificates_from_validator(chain_id, &remote_node)
             .await?;
 
-        drop(_guard);
         // Process received certificates. If the client state has changed during the
         // network calls, we should still be fine.
         self.receive_certificates_from_validator(name, tracker, certificates)

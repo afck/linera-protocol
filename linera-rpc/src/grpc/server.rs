@@ -557,7 +557,12 @@ where
         let start = Instant::now();
         let query = request.into_inner().try_into()?;
         tracing::trace!(?query, "Handling chain info query");
-        match self.state.clone().handle_chain_info_query(query).await {
+        match self
+            .state
+            .clone()
+            .handle_chain_info_query(query, None)
+            .await
+        {
             Ok((info, actions)) => {
                 Self::log_request_success_and_latency(start, "handle_chain_info_query");
                 self.handle_network_actions(actions);

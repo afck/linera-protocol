@@ -405,7 +405,7 @@ where
         } else {
             validator
                 .state
-                .handle_chain_info_query(query)
+                .handle_chain_info_query(query, None)
                 .await
                 .map_err(Into::into)
         };

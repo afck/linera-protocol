@@ -448,7 +448,7 @@ where
         .await
     }
 
-    // Schedule a notification when cross-chain messages are delivered up to the given height.
+    // Schedules a notification when cross-chain messages are delivered up to the given height.
     #[tracing::instrument(
         level = "trace",
         skip(self, chain_id, height, actions, notify_when_messages_are_delivered)
@@ -868,6 +868,7 @@ where
     pub async fn handle_chain_info_query(
         &self,
         query: ChainInfoQuery,
+        notify_when_messages_are_delivered: Option<oneshot::Sender<()>>,
     ) -> Result<(ChainInfoResponse, NetworkActions), WorkerError> {
         trace!("{} <-- {:?}", self.nickname, query);
         let result = self
@@ -875,6 +876,17 @@ where
                 ChainWorkerRequest::HandleChainInfoQuery { query, callback }
             })
             .await;
+        if let Ok((response, actions)) = &result {
+            if let Ok(height) = response.info.next_block_height.try_sub_one() {
+                self.register_delivery_notifier(
+                    response.info.chain_id,
+                    height,
+                    actions,
+                    notify_when_messages_are_delivered,
+                )
+                .await;
+            }
+        }
         trace!("{} --> {:?}", self.nickname, result);
         result
     }
