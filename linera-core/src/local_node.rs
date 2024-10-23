@@ -25,8 +25,8 @@ use linera_storage::Storage;
 use linera_views::views::ViewError;
 use rand::{prelude::SliceRandom, thread_rng};
 use thiserror::Error;
-use tokio::sync::OwnedRwLockReadGuard;
-use tracing::warn;
+use tokio::sync::{oneshot, OwnedRwLockReadGuard};
+use tracing::{error, warn};
 
 use crate::{
     data_types::{BlockHeightRange, ChainInfo, ChainInfoQuery, ChainInfoResponse},
@@ -341,11 +341,14 @@ where
         chain_id: ChainId,
         height: BlockHeight,
     ) -> Result<(), LocalNodeError> {
-        // TODO(#2692): Implement this, once #2689 is merged.
-        warn!(
-            "Not waiting for outgoing messages from {chain_id:.8} up to height {height}: \
-            not implemented yet."
-        );
+        let (notifier, receiver) = oneshot::channel();
+        self.node
+            .state
+            .register_delivery_notifier(chain_id, height, notifier)
+            .await?;
+        if receiver.await.is_err() {
+            error!("Delivery notifier was dropped.");
+        }
         Ok(())
     }
 

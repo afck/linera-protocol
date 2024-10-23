@@ -299,6 +299,17 @@ where
         Ok((response, actions))
     }
 
+    pub(super) async fn register_delivery_notifier(
+        &mut self,
+        height: BlockHeight,
+        notifier: oneshot::Sender<()>,
+    ) -> Result<(), WorkerError> {
+        ChainWorkerStateWithTemporaryChanges::new(self)
+            .await
+            .register_delivery_notifier(height, notifier)
+            .await
+    }
+
     /// Ensures that the current chain is active, returning an error otherwise.
     fn ensure_is_active(&mut self) -> Result<(), WorkerError> {
         if !self.knows_chain_is_active {

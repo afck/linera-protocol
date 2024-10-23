@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 
 use linera_base::{
-    data_types::{ArithmeticError, Timestamp, UserApplicationDescription},
+    data_types::{ArithmeticError, BlockHeight, Timestamp, UserApplicationDescription},
     ensure,
     identifiers::{GenericApplicationId, UserApplicationId},
 };
@@ -20,9 +20,11 @@ use linera_chain::{
 use linera_execution::{ChannelSubscription, Query, Response};
 use linera_storage::{Clock as _, Storage};
 use linera_views::views::View;
+use tokio::sync::oneshot;
+use tracing::error;
 #[cfg(with_testing)]
 use {
-    linera_base::{crypto::CryptoHash, data_types::BlockHeight},
+    linera_base::crypto::CryptoHash,
     linera_chain::data_types::{Certificate, MessageBundle, Origin},
 };
 
@@ -332,6 +334,27 @@ where
             info.manager.add_values(chain.manager.get());
         }
         Ok(ChainInfoResponse::new(info, self.0.config.key_pair()))
+    }
+
+    /// Sends `()` to the notifier if all messages have been delivered up to the given block
+    /// block height; otherwise registers it so that it will be sent later.
+    pub(super) async fn register_delivery_notifier(
+        &mut self,
+        height: BlockHeight,
+        notifier: oneshot::Sender<()>,
+    ) -> Result<(), WorkerError> {
+        if self
+            .0
+            .all_messages_to_tracked_chains_delivered_up_to(height)
+            .await?
+        {
+            if notifier.send(()).is_err() {
+                error!("Delivery notification receiver was dropped.");
+            }
+        } else {
+            self.0.delivery_notifier.register(height, notifier);
+        }
+        Ok(())
     }
 }
 

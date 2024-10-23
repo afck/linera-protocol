@@ -126,6 +126,12 @@ where
         query: ChainInfoQuery,
         callback: oneshot::Sender<Result<(ChainInfoResponse, NetworkActions), WorkerError>>,
     },
+
+    RegisterDeliveryNotifier {
+        height: BlockHeight,
+        notify_when_messages_are_delivered: oneshot::Sender<()>,
+        callback: oneshot::Sender<Result<(), WorkerError>>,
+    },
 }
 
 /// The actor worker type.
@@ -315,6 +321,17 @@ where
                 ChainWorkerRequest::HandleChainInfoQuery { query, callback } => callback
                     .send(self.worker.handle_chain_info_query(query).await)
                     .is_ok(),
+                ChainWorkerRequest::RegisterDeliveryNotifier {
+                    height,
+                    notify_when_messages_are_delivered,
+                    callback,
+                } => callback
+                    .send(
+                        self.worker
+                            .register_delivery_notifier(height, notify_when_messages_are_delivered)
+                            .await,
+                    )
+                    .is_ok(),
             };
 
             if !responded {
@@ -446,6 +463,14 @@ where
             } => formatter
                 .debug_struct("ChainWorkerRequest::HandleChainInfoQuery")
                 .field("query", &query)
+                .finish_non_exhaustive(),
+            ChainWorkerRequest::RegisterDeliveryNotifier {
+                height,
+                notify_when_messages_are_delivered: _notify_when_messages_are_delivered,
+                callback: _callback,
+            } => formatter
+                .debug_struct("ChainWorkerRequest::RegisterDeliveryNotifier")
+                .field("height", height)
                 .finish_non_exhaustive(),
         }
     }

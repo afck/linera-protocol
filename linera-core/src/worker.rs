@@ -841,6 +841,23 @@ where
         Ok((info, actions))
     }
 
+    #[instrument(skip_all, fields(nick = self.nickname, chain_id, height))]
+    pub async fn register_delivery_notifier(
+        &self,
+        chain_id: ChainId,
+        height: BlockHeight,
+        notify_when_messages_are_delivered: oneshot::Sender<()>,
+    ) -> Result<(), WorkerError> {
+        self.query_chain_worker(chain_id, move |callback| {
+            ChainWorkerRequest::RegisterDeliveryNotifier {
+                height,
+                notify_when_messages_are_delivered,
+                callback,
+            }
+        })
+        .await
+    }
+
     #[instrument(skip_all, fields(
         nick = self.nickname,
         chain_id = format!("{:.8}", query.chain_id)
