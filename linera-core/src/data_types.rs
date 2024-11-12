@@ -2,7 +2,11 @@
 // Copyright (c) Zefchain Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    fmt,
+    ops::{Deref, DerefMut},
+};
 
 use linera_base::{
     crypto::{BcsSignable, CryptoError, CryptoHash, KeyPair, Signature},
@@ -57,7 +61,7 @@ impl BlockHeightRange {
 }
 
 /// Request information about a chain.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[cfg_attr(with_testing, derive(test_strategy::Arbitrary, Eq, PartialEq))]
 pub struct ChainInfoQuery {
     /// The chain ID.
@@ -80,6 +84,44 @@ pub struct ChainInfoQuery {
     pub request_leader_timeout: bool,
     /// Include a vote to switch to fallback mode, if appropriate.
     pub request_fallback: bool,
+}
+
+impl fmt::Debug for ChainInfoQuery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ChainInfoQuery {
+            chain_id,
+            test_next_block_height,
+            request_owner_balance,
+            request_committees,
+            request_pending_message_bundles,
+            request_sent_certificate_hashes_in_range,
+            request_received_log_excluding_first_n,
+            request_manager_values,
+            request_leader_timeout,
+            request_fallback,
+        } = self;
+        DebugStruct::from(f.debug_struct("ChainInfoQuery"))
+            .field("chain_id", chain_id)
+            .field_if_some("test_next_block_height", test_next_block_height)
+            .field_if_some("request_owner_balance", request_owner_balance)
+            .field_if_true("request_committees", request_committees)
+            .field_if_true(
+                "request_pending_message_bundles",
+                request_pending_message_bundles,
+            )
+            .field_if_some(
+                "request_sent_certificate_hashes_in_range",
+                request_sent_certificate_hashes_in_range,
+            )
+            .field_if_some(
+                "request_received_log_excluding_first_n",
+                request_received_log_excluding_first_n,
+            )
+            .field_if_true("request_manager_values", request_manager_values)
+            .field_if_true("request_leader_timeout", request_leader_timeout)
+            .field_if_true("request_fallback", request_fallback)
+            .finish()
+    }
 }
 
 impl ChainInfoQuery {
@@ -335,5 +377,54 @@ impl<T> ClientOutcome<T> {
             ClientOutcome::Committed(t) => Ok(ClientOutcome::Committed(f(t)?)),
             ClientOutcome::WaitForTimeout(timeout) => Ok(ClientOutcome::WaitForTimeout(timeout)),
         }
+    }
+}
+
+/// A wrapper for [`fmt::DebugStruct`] that adds methods for printing fields conditionally,
+/// e.g. `Option`s only if they are `Some`.
+struct DebugStruct<'a, 'b> {
+    inner: fmt::DebugStruct<'a, 'b>,
+    exhaustive: bool,
+}
+
+impl<'a, 'b> From<fmt::DebugStruct<'a, 'b>> for DebugStruct<'a, 'b> {
+    fn from(inner: fmt::DebugStruct<'a, 'b>) -> Self {
+        Self {
+            inner,
+            exhaustive: true,
+        }
+    }
+}
+
+impl<'a, 'b> DebugStruct<'a, 'b> {
+    fn field(&mut self, name: &str, value: &dyn fmt::Debug) -> &mut Self {
+        self.inner.field(name, value);
+        self
+    }
+
+    fn finish(&mut self) -> fmt::Result {
+        if self.exhaustive {
+            self.inner.finish()
+        } else {
+            self.inner.finish_non_exhaustive()
+        }
+    }
+
+    fn field_if_true(&mut self, name: &str, value: &bool) -> &mut Self {
+        if *value {
+            self.inner.field(name, value);
+        } else {
+            self.exhaustive = false;
+        }
+        self
+    }
+
+    fn field_if_some<T: fmt::Debug>(&mut self, name: &str, value: &Option<T>) -> &mut Self {
+        if value.is_some() {
+            self.inner.field(name, value);
+        } else {
+            self.exhaustive = false;
+        }
+        self
     }
 }
