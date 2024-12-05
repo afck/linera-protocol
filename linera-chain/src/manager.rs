@@ -395,6 +395,12 @@ impl ChainManager {
         Ok(Outcome::Accept)
     }
 
+    /// Sets the locked block.
+    pub fn set_locked(&mut self, cert: ValidatedBlockCertificate, blobs: BTreeMap<BlobId, Blob>) {
+        self.locked = Some(cert);
+        self.locked_blobs = blobs;
+    }
+
     /// Signs a vote to validate the proposed block.
     pub fn create_vote(
         &mut self,
@@ -402,24 +408,8 @@ impl ChainManager {
         executed_block: ExecutedBlock,
         key_pair: Option<&KeyPair>,
         local_time: Timestamp,
-        blobs: BTreeMap<BlobId, Blob>,
     ) -> Option<Either<&Vote<ValidatedBlock>, &Vote<ConfirmedBlock>>> {
         let round = proposal.content.round;
-
-        // If the validated block certificate is more recent, update our locked block.
-        if let Some(lite_cert) = &proposal.validated_block_certificate {
-            if self
-                .locked
-                .as_ref()
-                .map_or(true, |locked| locked.round < lite_cert.round)
-            {
-                let value = Hashed::new(ValidatedBlock::new(executed_block.clone()));
-                if let Some(certificate) = lite_cert.clone().with_value(value) {
-                    self.locked = Some(certificate);
-                    self.locked_blobs = blobs;
-                }
-            }
-        }
 
         // Record the proposed block, so it can be supplied to clients that request it.
         self.proposed = Some(proposal);

@@ -1727,8 +1727,8 @@ where
         }
         if let Some(cert) = info.manager.requested_locked {
             let hash = cert.hash();
-            let blobs = info.manager.locked_blobs.clone();
-            if let Err(err) = self.client.handle_certificate(*cert.clone(), blobs).await {
+            let blobs = info.manager.locked_blobs;
+            if let Err(err) = self.client.handle_certificate(*cert, blobs).await {
                 warn!(
                     "Skipping certificate {hash} from validator {}: {err}",
                     remote_node.name

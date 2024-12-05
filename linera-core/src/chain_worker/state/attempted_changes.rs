@@ -14,7 +14,10 @@ use linera_base::{
 use linera_chain::{
     data_types::{BlockExecutionOutcome, BlockProposal, MessageBundle, Origin, Target},
     manager,
-    types::{ConfirmedBlockCertificate, TimeoutCertificate, ValidatedBlockCertificate},
+    types::{
+        ConfirmedBlockCertificate, Hashed, TimeoutCertificate, ValidatedBlock,
+        ValidatedBlockCertificate,
+    },
     ChainStateView,
 };
 use linera_execution::{
@@ -132,16 +135,33 @@ where
     ) -> Result<(), WorkerError> {
         // Create the vote and store it in the chain state.
         let executed_block = outcome.with(proposal.content.block.clone());
-        let blobs = if proposal.validated_block_certificate.is_some() {
-            self.state
-                .get_required_blobs(&executed_block, &proposal.blobs)
-                .await?
-        } else {
-            BTreeMap::new()
-        };
         let key_pair = self.state.config.key_pair();
+        if let Some(lite_cert) = &proposal.validated_block_certificate {
+            if self
+                .state
+                .chain
+                .manager
+                .get()
+                .locked
+                .as_ref()
+                .map_or(true, |locked| locked.round < lite_cert.round)
+            {
+                let value = Hashed::new(ValidatedBlock::new(executed_block.clone()));
+                if let Some(certificate) = lite_cert.clone().with_value(value) {
+                    let blobs = self
+                        .state
+                        .get_required_blobs(&executed_block, &proposal.blobs)
+                        .await?;
+                    self.state
+                        .chain
+                        .manager
+                        .get_mut()
+                        .set_locked(certificate, blobs);
+                }
+            }
+        }
         let manager = self.state.chain.manager.get_mut();
-        match manager.create_vote(proposal, executed_block, key_pair, local_time, blobs) {
+        match manager.create_vote(proposal, executed_block, key_pair, local_time) {
             // Cache the value we voted on, so the client doesn't have to send it again.
             Some(Either::Left(vote)) => {
                 self.state
