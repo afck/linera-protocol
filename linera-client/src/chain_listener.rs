@@ -1,14 +1,14 @@
 // Copyright (c) Zefchain Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeSet, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use async_trait::async_trait;
-use futures::{
-    future::{self, Either},
-    lock::Mutex,
-    StreamExt,
-};
+use futures::{lock::Mutex, stream, StreamExt};
 use linera_base::{
     crypto::AccountSecretKey,
     data_types::Timestamp,
@@ -17,8 +17,8 @@ use linera_base::{
 use linera_chain::data_types::OutgoingMessage;
 use linera_core::{
     client::{ChainClient, ChainClientError},
-    node::ValidatorNodeProvider,
-    worker::Reason,
+    node::{NotificationStream, ValidatorNodeProvider},
+    worker::{Notification, Reason},
 };
 use linera_execution::{Message, SystemMessage};
 use linera_storage::{Clock as _, Storage};
@@ -105,7 +105,12 @@ impl ChainListener {
     where
         C: ClientContext,
     {
-        let chain_ids = context.lock().await.wallet().chain_ids();
+        let chain_ids = {
+            let guard = context.lock().await;
+            let mut chain_ids = BTreeSet::from_iter(guard.wallet().chain_ids());
+            chain_ids.insert(guard.wallet().genesis_admin_chain());
+            chain_ids
+        };
         for chain_id in chain_ids {
             Self::run_with_chain_id(
                 chain_id,
@@ -150,27 +155,48 @@ impl ChainListener {
     where
         C: ClientContext,
     {
-        let mut guard = listening.lock().await;
-        if guard.contains(&chain_id) {
+        if !listening.lock().await.insert(chain_id) {
             // If we are already listening to notifications, there's nothing to do.
             // This can happen if we download a child before the parent
             // chain, and then process the OpenChain message in the parent.
             return Ok(());
         }
-        guard.insert(chain_id);
-        drop(guard);
         // If the client is not present, we can request it.
         let client = context.lock().await.make_chain_client(chain_id)?;
-        let (listener, _listen_handle, mut local_stream) = client.listen().await?;
+        let (listener, _listen_handle, local_stream) = client.listen().await?;
+        let mut local_stream = local_stream.fuse();
+        let admin_listener: NotificationStream = if client.admin_id() == chain_id {
+            Box::pin(stream::pending())
+        } else {
+            Box::pin(client.subscribe_to(client.admin_id()).await?)
+        };
+        let mut admin_listener = admin_listener.fuse();
         client.synchronize_from_validators().await?;
         drop(linera_base::task::spawn(listener.in_current_span()));
         let mut timeout = storage.clock().current_time();
         loop {
-            let sleep = Box::pin(storage.clock().sleep_until(timeout));
-            let notification = match future::select(local_stream.next(), sleep).await {
-                Either::Left((Some(notification), _)) => notification,
-                Either::Left((None, _)) => break,
-                Either::Right(((), _)) => {
+            let mut sleep = Box::pin(futures::FutureExt::fuse(
+                storage.clock().sleep_until(timeout),
+            ));
+            let notification = futures::select! {
+                maybe_notification = local_stream.next() => {
+                    if let Some(notification) = maybe_notification {
+                        notification
+                    } else {
+                        break;
+                    }
+                }
+                maybe_notification = admin_listener.next() => {
+                    // A new block on the admin chain may mean a new committee. Set the timer to
+                    // process the inbox.
+                    if let Some(
+                        Notification { reason: Reason::NewBlock { .. }, .. }
+                    ) = maybe_notification {
+                        timeout = storage.clock().current_time();
+                    }
+                    continue;
+                }
+                () = sleep => {
                     timeout = Timestamp::from(u64::MAX);
                     if config.skip_process_inbox {
                         debug!("Not processing inbox due to listener configuration");

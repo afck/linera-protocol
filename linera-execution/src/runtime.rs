@@ -1398,7 +1398,7 @@ impl ContractRuntime for ContractSyncRuntimeHandle {
             index: this.transaction_tracker.next_message_index(),
         };
         let chain_id = ChainId::child(message_id);
-        let [open_chain_message, subscribe_message] = this
+        let open_chain_message = this
             .execution_state_sender
             .send_request(|callback| ExecutionRequest::OpenChain {
                 ownership,
@@ -1408,9 +1408,7 @@ impl ContractRuntime for ContractSyncRuntimeHandle {
                 callback,
             })?
             .recv_response()?;
-        let outcome = RawExecutionOutcome::default()
-            .with_message(open_chain_message)
-            .with_message(subscribe_message);
+        let outcome = RawExecutionOutcome::default().with_message(open_chain_message);
         this.transaction_tracker.add_system_outcome(outcome)?;
         Ok((message_id, chain_id))
     }

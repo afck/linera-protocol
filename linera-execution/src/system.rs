@@ -24,7 +24,7 @@ use linera_base::{
     ensure, hex_debug,
     identifiers::{
         Account, AccountOwner, BlobId, BlobType, ChainDescription, ChainId, ChannelFullName,
-        MessageId, ModuleId, Owner,
+        EventId, MessageId, ModuleId, Owner, StreamId,
     },
     ownership::{ChainOwnership, TimeoutConfig},
 };
@@ -55,6 +55,10 @@ pub static OPEN_CHAIN_MESSAGE_INDEX: u32 = 0;
 /// The relative index of the `ApplicationCreated` message created by the `CreateApplication`
 /// operation.
 pub static CREATE_APPLICATION_MESSAGE_INDEX: u32 = 0;
+/// The event stream name for new epochs and committees.
+pub static EPOCH_STREAM_NAME: &[u8] = &[0];
+/// The event stream name for removed epochs.
+pub static REMOVED_EPOCH_STREAM_NAME: &[u8] = &[1];
 
 /// The number of times the [`SystemOperation::OpenChain`] was executed.
 #[cfg(with_metrics)]
@@ -191,6 +195,10 @@ pub enum SystemOperation {
     },
     /// Operations that are only allowed on the admin chain.
     Admin(AdminOperation),
+    /// Processes an event about a new epoch and committee.
+    ProcessNewEpoch(Epoch),
+    /// Processes an event about a removed epoch and committee.
+    ProcessRemovedEpoch(Epoch),
 }
 
 /// Operations that are only allowed on the admin chain.
@@ -228,10 +236,6 @@ pub enum SystemMessage {
     },
     /// Creates (or activates) a new chain.
     OpenChain(OpenChainConfig),
-    /// Adds a new epoch and committee.
-    CreateCommittee { epoch: Epoch, committee: Committee },
-    /// Removes an old committee.
-    RemoveCommittee { epoch: Epoch },
     /// Subscribes to a channel.
     Subscribe {
         id: ChainId,
@@ -365,6 +369,8 @@ pub enum SystemExecutionError {
     ArithmeticError(#[from] ArithmeticError),
     #[error(transparent)]
     ViewError(ViewError),
+    #[error(transparent)]
+    BcsError(#[from] bcs::Error),
 
     #[error("Invalid admin ID in new chain: {0}")]
     InvalidNewChainAdminId(ChainId),
@@ -390,10 +396,6 @@ pub enum SystemExecutionError {
     InvalidCommitteeCreation,
     #[error("Failed to remove committee")]
     InvalidCommitteeRemoval,
-    #[error(
-        "Chain {0} tried to subscribe to the admin channel ({1}) of a chain that is not the admin chain"
-    )]
-    InvalidAdminSubscription(ChainId, SystemChannel),
     #[error("Cannot subscribe to a channel ({1}) on the same chain ({0})")]
     SelfSubscription(ChainId, SystemChannel),
     #[error("Chain {0} tried to subscribe to channel {1} but it is already subscribed")]
@@ -472,8 +474,8 @@ where
         match operation {
             OpenChain(config) => {
                 let next_message_id = context.next_message_id(txn_tracker.next_message_index());
-                let messages = self.open_chain(config, next_message_id).await?;
-                outcome.messages.extend(messages);
+                let message = self.open_chain(config, next_message_id).await?;
+                outcome.messages.push(message);
                 #[cfg(with_metrics)]
                 OPEN_CHAIN_COUNT.with_label_values(&[]).inc();
             }
@@ -551,28 +553,22 @@ where
                         );
                         self.committees.get_mut().insert(epoch, committee.clone());
                         self.epoch.set(Some(epoch));
-                        let message = RawOutgoingMessage {
-                            destination: Destination::Subscribers(SystemChannel::Admin.name()),
-                            authenticated: false,
-                            grant: Amount::ZERO,
-                            kind: MessageKind::Protected,
-                            message: SystemMessage::CreateCommittee { epoch, committee },
-                        };
-                        outcome.messages.push(message);
+                        txn_tracker.add_event(
+                            StreamId::system(EPOCH_STREAM_NAME),
+                            bcs::to_bytes(&epoch)?,
+                            bcs::to_bytes(&committee)?,
+                        );
                     }
                     AdminOperation::RemoveCommittee { epoch } => {
                         ensure!(
                             self.committees.get_mut().remove(&epoch).is_some(),
                             SystemExecutionError::InvalidCommitteeRemoval
                         );
-                        let message = RawOutgoingMessage {
-                            destination: Destination::Subscribers(SystemChannel::Admin.name()),
-                            authenticated: false,
-                            grant: Amount::ZERO,
-                            kind: MessageKind::Protected,
-                            message: SystemMessage::RemoveCommittee { epoch },
-                        };
-                        outcome.messages.push(message);
+                        txn_tracker.add_event(
+                            StreamId::system(REMOVED_EPOCH_STREAM_NAME),
+                            bcs::to_bytes(&epoch)?,
+                            vec![],
+                        );
                     }
                 }
             }
@@ -581,12 +577,6 @@ where
                     context.chain_id != chain_id,
                     SystemExecutionError::SelfSubscription(context.chain_id, channel)
                 );
-                if channel == SystemChannel::Admin {
-                    ensure!(
-                        self.admin_id.get().as_ref() == Some(&chain_id),
-                        SystemExecutionError::InvalidAdminSubscription(context.chain_id, channel)
-                    );
-                }
                 let subscription = ChannelSubscription {
                     chain_id,
                     name: channel.name(),
@@ -683,6 +673,64 @@ where
             ReadBlob { blob_id } => {
                 self.read_blob_content(blob_id).await?;
                 self.blob_used(Some(txn_tracker), blob_id).await?;
+            }
+            ProcessNewEpoch(epoch) => {
+                let chain_next_epoch = self.epoch.get().expect("chain is active").try_add_one()?;
+                ensure!(
+                    epoch == chain_next_epoch,
+                    SystemExecutionError::InvalidCommitteeCreation
+                );
+                let admin_id = self
+                    .admin_id
+                    .get()
+                    .ok_or_else(|| SystemExecutionError::InactiveChain)?;
+                let event_id = EventId {
+                    chain_id: admin_id,
+                    stream_id: StreamId::system(EPOCH_STREAM_NAME),
+                    key: bcs::to_bytes(&epoch)?,
+                };
+                let bytes = match txn_tracker.next_replayed_oracle_response()? {
+                    None => self.context().extra().get_event(event_id.clone()).await?,
+                    Some(OracleResponse::Event(recorded_event_id, bytes))
+                        if recorded_event_id == event_id =>
+                    {
+                        bytes
+                    }
+                    Some(_) => return Err(SystemExecutionError::OracleResponseMismatch),
+                };
+                let committee = bcs::from_bytes(&bytes)?;
+                txn_tracker.add_oracle_response(OracleResponse::Event(event_id, bytes));
+                self.committees.get_mut().insert(epoch, committee);
+                self.epoch.set(Some(epoch));
+            }
+            ProcessRemovedEpoch(epoch) => {
+                let chain_epoch = self.epoch.get().expect("chain is active");
+                ensure!(
+                    epoch < chain_epoch,
+                    SystemExecutionError::InvalidCommitteeRemoval
+                );
+                let admin_id = self
+                    .admin_id
+                    .get()
+                    .ok_or_else(|| SystemExecutionError::InactiveChain)?;
+                let event_id = EventId {
+                    chain_id: admin_id,
+                    stream_id: StreamId::system(REMOVED_EPOCH_STREAM_NAME),
+                    key: bcs::to_bytes(&epoch)?,
+                };
+                let bytes = match txn_tracker.next_replayed_oracle_response()? {
+                    None => self.context().extra().get_event(event_id.clone()).await?,
+                    Some(OracleResponse::Event(recorded_event_id, bytes))
+                        if recorded_event_id == event_id =>
+                    {
+                        bytes
+                    }
+                    Some(_) => return Err(SystemExecutionError::OracleResponseMismatch),
+                };
+                txn_tracker.add_oracle_response(OracleResponse::Event(event_id, bytes));
+                self.committees
+                    .get_mut()
+                    .retain(|old_epoch, _| *old_epoch > epoch);
             }
         }
 
@@ -859,20 +907,6 @@ where
                     Recipient::Burn => (),
                 }
             }
-            CreateCommittee { epoch, committee } => {
-                let chain_next_epoch = self.epoch.get().expect("chain is active").try_add_one()?;
-                ensure!(
-                    epoch <= chain_next_epoch,
-                    SystemExecutionError::InvalidCommitteeCreation
-                );
-                if epoch == chain_next_epoch {
-                    self.committees.get_mut().insert(epoch, committee);
-                    self.epoch.set(Some(epoch));
-                }
-            }
-            RemoveCommittee { epoch } => {
-                self.committees.get_mut().remove(&epoch);
-            }
             RegisterApplications { applications } => {
                 for application in applications {
                     self.check_and_record_bytecode_blobs(&application.module_id, txn_tracker)
@@ -926,12 +960,6 @@ where
         self.epoch.set(Some(epoch));
         self.committees.set(committees);
         self.admin_id.set(Some(admin_id));
-        self.subscriptions
-            .insert(&ChannelSubscription {
-                chain_id: admin_id,
-                name: SystemChannel::Admin.name(),
-            })
-            .expect("serialization failed");
         self.ownership.set(ownership);
         self.timestamp.set(timestamp);
         self.balance.set(balance);
@@ -959,13 +987,12 @@ where
         &mut self,
         config: OpenChainConfig,
         next_message_id: MessageId,
-    ) -> Result<[RawOutgoingMessage<SystemMessage, Amount>; 2], SystemExecutionError> {
+    ) -> Result<RawOutgoingMessage<SystemMessage, Amount>, SystemExecutionError> {
         let child_id = ChainId::child(next_message_id);
         ensure!(
             self.admin_id.get().as_ref() == Some(&config.admin_id),
             SystemExecutionError::InvalidNewChainAdminId(child_id)
         );
-        let admin_id = config.admin_id;
         ensure!(
             self.committees.get() == &config.committees,
             SystemExecutionError::InvalidCommittees
@@ -985,21 +1012,7 @@ where
             kind: MessageKind::Protected,
             message: SystemMessage::OpenChain(config),
         };
-        let subscription = ChannelSubscription {
-            chain_id: admin_id,
-            name: SystemChannel::Admin.name(),
-        };
-        let subscribe_message = RawOutgoingMessage {
-            destination: Destination::Recipient(admin_id),
-            authenticated: false,
-            grant: Amount::ZERO,
-            kind: MessageKind::Protected,
-            message: SystemMessage::Subscribe {
-                id: child_id,
-                subscription,
-            },
-        };
-        Ok([open_chain_message, subscribe_message])
+        Ok(open_chain_message)
     }
 
     pub async fn close_chain(

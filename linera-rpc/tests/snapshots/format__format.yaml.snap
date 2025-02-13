@@ -423,6 +423,14 @@ Event:
         TYPENAME: StreamId
     - key: BYTES
     - value: BYTES
+EventId:
+  STRUCT:
+    - chain_id:
+        TYPENAME: ChainId
+    - stream_id:
+        TYPENAME: StreamId
+    - key:
+        SEQ: U8
 GenericApplicationId:
   ENUM:
     0:
@@ -707,6 +715,11 @@ OracleResponse:
       Round:
         NEWTYPE:
           OPTION: U32
+    5:
+      Event:
+        TUPLE:
+          - TYPENAME: EventId
+          - SEQ: U8
 Origin:
   STRUCT:
     - sender:
@@ -1009,40 +1022,28 @@ SystemMessage:
         NEWTYPE:
           TYPENAME: OpenChainConfig
     3:
-      CreateCommittee:
-        STRUCT:
-          - epoch:
-              TYPENAME: Epoch
-          - committee:
-              TYPENAME: Committee
-    4:
-      RemoveCommittee:
-        STRUCT:
-          - epoch:
-              TYPENAME: Epoch
-    5:
       Subscribe:
         STRUCT:
           - id:
               TYPENAME: ChainId
           - subscription:
               TYPENAME: ChannelSubscription
-    6:
+    4:
       Unsubscribe:
         STRUCT:
           - id:
               TYPENAME: ChainId
           - subscription:
               TYPENAME: ChannelSubscription
-    7:
+    5:
       ApplicationCreated: UNIT
-    8:
+    6:
       RegisterApplications:
         STRUCT:
           - applications:
               SEQ:
                 TYPENAME: UserApplicationDescription
-    9:
+    7:
       RequestApplication:
         NEWTYPE:
           TYPENAME: ApplicationId
@@ -1144,6 +1145,14 @@ SystemOperation:
       Admin:
         NEWTYPE:
           TYPENAME: AdminOperation
+    14:
+      ProcessNewEpoch:
+        NEWTYPE:
+          TYPENAME: Epoch
+    15:
+      ProcessRemovedEpoch:
+        NEWTYPE:
+          TYPENAME: Epoch
 TimeDelta:
   NEWTYPESTRUCT: U64
 Timeout:
