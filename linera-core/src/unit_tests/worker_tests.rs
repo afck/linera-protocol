@@ -44,7 +44,7 @@ use linera_execution::{
     committee::{Committee, Epoch},
     system::{
         AdminOperation, OpenChainConfig, Recipient, SystemMessage, SystemOperation,
-        EPOCH_STREAM_NAME, REMOVED_EPOCH_STREAM_NAME,
+        EPOCH_STREAM_NAME as NEW_EPOCH_STREAM_NAME, REMOVED_EPOCH_STREAM_NAME,
     },
     test_utils::{ExpectedCall, RegisterMockApplication, SystemExecutionState},
     ExecutionError, Message, MessageKind, Query, QueryContext, QueryOutcome, QueryResponse,
@@ -2414,7 +2414,7 @@ where
                 events: vec![
                     vec![Event {
                         value: bcs::to_bytes(&committee).unwrap(),
-                        stream_id: StreamId::system(EPOCH_STREAM_NAME),
+                        stream_id: StreamId::system(NEW_EPOCH_STREAM_NAME),
                         key: bcs::to_bytes(&Epoch::from(1)).unwrap(),
                     }],
                     Vec::new(),
@@ -2506,7 +2506,7 @@ where
                     vec![OracleResponse::Event(
                         EventId {
                             chain_id: admin_id,
-                            stream_id: StreamId::system(EPOCH_STREAM_NAME),
+                            stream_id: StreamId::system(NEW_EPOCH_STREAM_NAME),
                             key: bcs::to_bytes(&Epoch::from(1)).unwrap(),
                         },
                         bcs::to_bytes(&committee).unwrap(),
@@ -2644,7 +2644,7 @@ where
                 messages: vec![vec![]],
                 events: vec![vec![Event {
                     value: bcs::to_bytes(&committee).unwrap(),
-                    stream_id: StreamId::system(EPOCH_STREAM_NAME),
+                    stream_id: StreamId::system(NEW_EPOCH_STREAM_NAME),
                     key: bcs::to_bytes(&Epoch::from(1)).unwrap(),
                 }]],
                 state_hash: SystemExecutionState {
@@ -2772,7 +2772,7 @@ where
                 events: vec![
                     vec![Event {
                         value: bcs::to_bytes(&committee).unwrap(),
-                        stream_id: StreamId::system(EPOCH_STREAM_NAME),
+                        stream_id: StreamId::system(NEW_EPOCH_STREAM_NAME),
                         key: bcs::to_bytes(&Epoch::from(1)).unwrap(),
                     }],
                     vec![Event {
