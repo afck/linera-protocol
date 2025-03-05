@@ -982,6 +982,11 @@ impl BlobContent {
         )
     }
 
+    /// Creates a new committee [`BlobContent`] from the provided serialized committee.
+    pub fn new_committee(committee: impl Into<Box<[u8]>>) -> Self {
+        BlobContent::new(BlobType::Committee, committee)
+    }
+
     /// Gets a reference to the blob's bytes.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes

@@ -164,6 +164,8 @@ pub enum BlobType {
     ContractBytecode,
     /// A blob containing compressed service bytecode.
     ServiceBytecode,
+    /// A blob containing a committee of validators.
+    Committee,
 }
 
 impl Display for BlobType {

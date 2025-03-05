@@ -28,7 +28,8 @@ use linera_base::{
     abi::Abi,
     crypto::{AccountPublicKey, AccountSecretKey, CryptoHash, ValidatorPublicKey},
     data_types::{
-        Amount, ApplicationPermissions, ArithmeticError, Blob, BlockHeight, Round, Timestamp,
+        Amount, ApplicationPermissions, ArithmeticError, Blob, BlobContent, BlockHeight, Round,
+        Timestamp,
     },
     ensure,
     hashed::Hashed,
@@ -619,6 +620,9 @@ pub enum ChainClientError {
         chain_id: ChainId,
         target_next_block_height: BlockHeight,
     },
+
+    #[error(transparent)]
+    BcsError(#[from] bcs::Error),
 }
 
 impl From<Infallible> for ChainClientError {
@@ -3003,29 +3007,25 @@ where
         &self,
         committee: Committee,
     ) -> Result<ClientOutcome<ConfirmedBlockCertificate>, ChainClientError> {
-        loop {
-            let epoch = self.epoch().await?;
-            match self
-                .execute_block(
-                    vec![Operation::System(SystemOperation::Admin(
-                        AdminOperation::CreateCommittee {
-                            epoch: epoch.try_add_one()?,
-                            committee: committee.clone(),
-                        },
-                    ))],
-                    vec![],
-                )
-                .await?
-            {
-                ExecuteBlockOutcome::Executed(certificate) => {
-                    return Ok(ClientOutcome::Committed(certificate))
-                }
-                ExecuteBlockOutcome::Conflict(_) => continue,
-                ExecuteBlockOutcome::WaitForTimeout(timeout) => {
-                    return Ok(ClientOutcome::WaitForTimeout(timeout));
-                }
-            };
+        let blob = Blob::new(BlobContent::new_committee(bcs::to_bytes(&committee)?));
+        let blob_hash = blob.id().hash;
+        match self
+            .execute_operations(
+                vec![Operation::System(SystemOperation::PublishCommitteeBlob {
+                    blob_hash,
+                })],
+                vec![blob],
+            )
+            .await?
+        {
+            ClientOutcome::Committed(_) => {}
+            outcome @ ClientOutcome::WaitForTimeout(_) => return Ok(outcome),
         }
+        let epoch = self.epoch().await?.try_add_one()?;
+        self.execute_operation(Operation::System(SystemOperation::Admin(
+            AdminOperation::CreateCommittee { epoch, blob_hash },
+        )))
+        .await
     }
 
     /// Synchronizes the chain with the validators and creates blocks without any operations to
