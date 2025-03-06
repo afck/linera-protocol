@@ -344,6 +344,7 @@ where
             .map(|blobs| blobs.into_values().collect::<Vec<_>>());
 
         if let Ok(blobs) = &blobs_result {
+            tracing::info!("WRITE {:?}", required_blob_ids);
             self.state
                 .storage
                 .write_blobs_and_certificate(blobs, &certificate)

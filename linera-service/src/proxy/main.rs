@@ -197,7 +197,7 @@ impl<S> MessageHandler for SimpleProxy<S>
 where
     S: Storage + Clone + Send + Sync + 'static,
 {
-    #[instrument(skip_all, fields(chain_id = ?message.target_chain_id()))]
+    #[instrument(skip_all, fields(chain_id = ?message.target_chain_id(), host = self.public_config.host, port = self.public_config.port))]
     async fn handle_message(&mut self, message: RpcMessage) -> Option<RpcMessage> {
         if message.is_local_message() {
             match self.try_local_message(message).await {
@@ -304,10 +304,15 @@ where
             UploadBlob(content) => {
                 let blob = Blob::new(*content);
                 let id = blob.id();
+                tracing::info!("WRITING {id:?}");
                 ensure!(
                     self.storage.maybe_write_blobs(&[blob]).await?[0],
                     "Blob not found"
                 );
+                self.storage.read_blobs(&[id]).await.unwrap()[0]
+                    .as_ref()
+                    .unwrap();
+                tracing::info!("WROTE {id:?}");
                 Ok(Some(RpcMessage::UploadBlobResponse(Box::new(id))))
             }
             DownloadBlob(blob_id) => {

@@ -231,6 +231,12 @@ where
                 let maybe_blobs = self.local_node.read_blobs_from_storage(blob_ids).await?;
                 let blobs = maybe_blobs.ok_or_else(|| original_err.clone())?;
                 self.remote_node.upload_blobs(blobs.clone()).await?;
+                tracing::info!(
+                    "UPLOADED BLOBS {:?} to {}",
+                    blob_ids,
+                    self.remote_node.public_key
+                );
+                tokio::time::sleep(Duration::from_secs(2)).await;
                 self.remote_node
                     .handle_confirmed_certificate(certificate, delivery)
                     .await

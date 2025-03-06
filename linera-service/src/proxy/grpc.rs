@@ -483,10 +483,15 @@ where
             request.into_inner().try_into()?;
         let blob = Blob::new(content);
         let id = blob.id();
+        tracing::info!("WRITING {id:?}");
         let result = self.0.storage.maybe_write_blobs(&[blob]).await;
         if !result.map_err(Self::error_to_status)?[0] {
             return Err(Status::not_found("Blob not found"));
         }
+        self.0.storage.read_blobs(&[id]).await.unwrap()[0]
+            .as_ref()
+            .unwrap();
+        tracing::info!("WROTE {id:?}");
         Ok(Response::new(id.try_into()?))
     }
 
