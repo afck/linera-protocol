@@ -53,7 +53,7 @@ use tonic::{
     Request, Response, Status,
 };
 use tower::{builder::ServiceBuilder, Layer, Service};
-use tracing::{debug, info, instrument, Instrument as _, Level};
+use tracing::{debug, info, instrument, Instrument as _};
 #[cfg(with_metrics)]
 use {
     linera_base::prometheus_util::{
@@ -630,7 +630,7 @@ where
         )?))
     }
 
-    #[instrument(skip_all, err(level = Level::WARN))]
+    #[instrument(skip_all, err(Display))]
     async fn blob_last_used_by(
         &self,
         request: Request<BlobId>,
@@ -645,7 +645,7 @@ where
         Ok(Response::new(blob_state.last_used_by.into()))
     }
 
-    #[instrument(skip_all, err(level = Level::WARN))]
+    #[instrument(skip_all, err(Display))]
     async fn missing_blob_ids(
         &self,
         request: Request<BlobIds>,
