@@ -34,8 +34,8 @@ use linera_rpc::{
             validator_worker_client::ValidatorWorkerClient,
             BlobContent, BlobId, BlobIds, BlockProposal, Certificate, CertificatesBatchRequest,
             CertificatesBatchResponse, ChainInfoQuery, ChainInfoResult, CryptoHash,
-            HandlePendingBlobRequest, LiteCertificate, Notification, PendingBlobRequest,
-            PendingBlobResult, SubscriptionRequest, VersionInfo,
+            HandlePendingBlobRequest, LiteCertificate, Notification, OptionalCryptoHash,
+            PendingBlobRequest, PendingBlobResult, SubscriptionRequest, VersionInfo,
         },
         pool::GrpcConnectionPool,
         GrpcProtoConversionError, GrpcProxyable, GRPC_CHUNKED_MESSAGE_FILL_LIMIT,
@@ -634,15 +634,23 @@ where
     async fn blob_last_used_by(
         &self,
         request: Request<BlobId>,
-    ) -> Result<Response<CryptoHash>, Status> {
+    ) -> Result<Response<OptionalCryptoHash>, Status> {
         let blob_id = request.into_inner().try_into()?;
-        let blob_state = self
-            .0
-            .storage
-            .read_blob_state(blob_id)
-            .await
-            .map_err(Self::error_to_status)?;
-        Ok(Response::new(blob_state.last_used_by.into()))
+        let result = self.0.storage.read_blob_state(blob_id).await;
+
+        match result {
+            Ok(blob_state) => {
+                // Return Some(hash) when the blob state is found
+                Ok(Response::new(OptionalCryptoHash {
+                    hash: Some(blob_state.last_used_by.into()),
+                }))
+            }
+            Err(ViewError::NotFound(_)) => {
+                // Return None when the blob state is not found
+                Ok(Response::new(OptionalCryptoHash::default()))
+            }
+            Err(err) => Err(Self::error_to_status(err)),
+        }
     }
 
     #[instrument(skip_all, err(Display))]

@@ -26,7 +26,7 @@ use linera_core::{
 use thiserror::Error;
 use tonic::{Code, Status};
 
-use super::api::{self, PendingBlobRequest};
+use super::api::{self, OptionalCryptoHash, PendingBlobRequest};
 use crate::{
     HandleConfirmedCertificateRequest, HandleLiteCertRequest, HandleTimeoutCertificateRequest,
     HandleValidatedCertificateRequest,
@@ -957,6 +957,30 @@ impl TryFrom<api::CertificatesBatchResponse> for Vec<Certificate> {
             .into_iter()
             .map(Certificate::try_from)
             .collect()
+    }
+}
+
+impl TryFrom<OptionalCryptoHash> for Option<CryptoHash> {
+    type Error = GrpcProtoConversionError;
+
+    fn try_from(optional_hash: OptionalCryptoHash) -> Result<Self, Self::Error> {
+        if let Some(hash) = optional_hash.hash {
+            Ok(Some(hash.try_into()?))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl TryFrom<Option<CryptoHash>> for OptionalCryptoHash {
+    type Error = GrpcProtoConversionError;
+
+    fn try_from(option_hash: Option<CryptoHash>) -> Result<Self, Self::Error> {
+        let mut optional_crypto_hash = OptionalCryptoHash::default();
+        if let Some(hash) = option_hash {
+            optional_crypto_hash.hash = Some(hash.into());
+        }
+        Ok(optional_crypto_hash)
     }
 }
 

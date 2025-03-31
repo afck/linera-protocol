@@ -87,7 +87,7 @@ service ValidatorNode {
   rpc DownloadCertificates(CertificatesBatchRequest) returns (CertificatesBatchResponse);
 
   // Return the hash of the `Certificate` that last used a blob.
-  rpc BlobLastUsedBy(BlobId) returns (CryptoHash);
+  rpc BlobLastUsedBy(BlobId) returns (OptionalCryptoHash);
 
   // Return the `BlobId`s that are not contained as `Blob`.
   rpc MissingBlobIds(BlobIds) returns (BlobIds);
@@ -334,6 +334,11 @@ message AccountPublicKey {
 
 message CryptoHash {
   bytes bytes = 1;
+}
+
+// Define the OptionalCryptoHash message type
+message OptionalCryptoHash {
+  optional CryptoHash hash = 1;
 }
 
 message AccountOwner {

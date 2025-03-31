@@ -443,8 +443,15 @@ impl ValidatorNode for GrpcClient {
     }
 
     #[instrument(target = "grpc_client", skip(self), err, fields(address = self.address))]
-    async fn blob_last_used_by(&self, blob_id: BlobId) -> Result<CryptoHash, NodeError> {
-        Ok(client_delegate!(self, blob_last_used_by, blob_id)?.try_into()?)
+    async fn blob_last_used_by(&self, blob_id: BlobId) -> Result<Option<CryptoHash>, NodeError> {
+        let result = client_delegate!(self, blob_last_used_by, blob_id)?;
+
+        // Extract the optional hash
+        if let Some(hash) = result.hash {
+            Ok(Some(hash.try_into()?))
+        } else {
+            Ok(None)
+        }
     }
 
     #[instrument(target = "grpc_client", skip(self), err, fields(address = self.address))]

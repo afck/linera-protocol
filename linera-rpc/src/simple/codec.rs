@@ -4,6 +4,7 @@
 use std::{io, mem, ops::DerefMut};
 
 use bytes::{Buf, BufMut, BytesMut};
+use linera_base::crypto::CryptoHash;
 use linera_core::node::NodeError;
 use thiserror::Error;
 use tokio_util::codec::{Decoder, Encoder};
@@ -111,6 +112,18 @@ impl From<Error> for NodeError {
                 tracing::error!("Unexpected decoding error: {err}");
                 NodeError::InvalidDecoding
             }
+        }
+    }
+}
+
+// Update the existing conversion from RpcMessage to CryptoHash to return Option<CryptoHash>
+impl TryFrom<RpcMessage> for Option<CryptoHash> {
+    type Error = NodeError;
+
+    fn try_from(message: RpcMessage) -> Result<Self, Self::Error> {
+        match message {
+            RpcMessage::BlobLastUsedByResponse(hash_option) => Ok(hash_option),
+            _ => Err(NodeError::UnexpectedMessage),
         }
     }
 }

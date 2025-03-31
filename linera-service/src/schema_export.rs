@@ -130,7 +130,7 @@ impl ValidatorNode for DummyValidatorNode {
         Err(NodeError::UnexpectedMessage)
     }
 
-    async fn blob_last_used_by(&self, _: BlobId) -> Result<CryptoHash, NodeError> {
+    async fn blob_last_used_by(&self, _: BlobId) -> Result<Option<CryptoHash>, NodeError> {
         Err(NodeError::UnexpectedMessage)
     }
 

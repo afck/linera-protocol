@@ -198,15 +198,19 @@ impl<N: ValidatorNode> RemoteNode<N> {
         blob_id: BlobId,
     ) -> Result<ConfirmedBlockCertificate, NodeError> {
         let last_used_hash = self.node.blob_last_used_by(blob_id).await?;
-        let certificate = self.node.download_certificate(last_used_hash).await?;
-        if !certificate.requires_blob(&blob_id) {
-            warn!(
-                "Got invalid last used by certificate for blob {} from validator {}",
-                blob_id, self.public_key
-            );
-            return Err(NodeError::InvalidCertificateForBlob(blob_id));
+        if let Some(hash) = last_used_hash {
+            let certificate = self.node.download_certificate(hash).await?;
+            if !certificate.requires_blob(&blob_id) {
+                warn!(
+                    "Got invalid last used by certificate for blob {} from validator {}",
+                    blob_id, self.public_key
+                );
+                return Err(NodeError::InvalidCertificateForBlob(blob_id));
+            }
+            Ok(certificate)
+        } else {
+            Err(NodeError::BlobsNotFound(vec![blob_id]))
         }
-        Ok(certificate)
     }
 
     /// Uploads the blobs to the validator.

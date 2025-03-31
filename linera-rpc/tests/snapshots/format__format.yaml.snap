@@ -1031,7 +1031,8 @@ RpcMessage:
     26:
       BlobLastUsedByResponse:
         NEWTYPE:
-          TYPENAME: CryptoHash
+          OPTION:
+            TYPENAME: CryptoHash
     27:
       MissingBlobIdsResponse:
         NEWTYPE:

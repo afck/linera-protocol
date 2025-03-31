@@ -22,7 +22,7 @@ use linera_rpc::{
     simple::{MessageHandler, TransportProtocol},
     RpcMessage,
 };
-use linera_sdk::linera_base_types::Blob;
+use linera_sdk::{linera_base_types::Blob, views::ViewError};
 use linera_service::util;
 #[cfg(with_metrics)]
 use linera_service::{prometheus_server, pyroscope_server};
@@ -347,9 +347,15 @@ where
                 let certificates = self.storage.read_certificates(hashes).await?;
                 Ok(Some(RpcMessage::DownloadCertificatesResponse(certificates)))
             }
-            BlobLastUsedBy(blob_id) => Ok(Some(RpcMessage::BlobLastUsedByResponse(Box::new(
-                self.storage.read_blob_state(*blob_id).await?.last_used_by,
-            )))),
+            BlobLastUsedBy(blob_id) => match self.storage.read_blob_state(*blob_id).await {
+                Ok(state) => Ok(Some(RpcMessage::BlobLastUsedByResponse(Some(
+                    state.last_used_by,
+                )))),
+                Err(ViewError::NotFound(_) | ViewError::BlobsNotFound(_)) => {
+                    Ok(Some(RpcMessage::BlobLastUsedByResponse(None)))
+                }
+                Err(error) => Err(error.into()),
+            },
             MissingBlobIds(blob_ids) => Ok(Some(RpcMessage::MissingBlobIdsResponse(
                 self.storage.missing_blobs(&blob_ids).await?,
             ))),

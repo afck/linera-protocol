@@ -40,6 +40,7 @@ use linera_views::dynamo_db::DynamoDbStore;
 use linera_views::scylla_db::ScyllaDbStore;
 use linera_views::{
     memory::MemoryStore, random::generate_test_namespace, store::TestKeyValueStore as _,
+    views::ViewError,
 };
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -230,7 +231,7 @@ where
         .await
     }
 
-    async fn blob_last_used_by(&self, blob_id: BlobId) -> Result<CryptoHash, NodeError> {
+    async fn blob_last_used_by(&self, blob_id: BlobId) -> Result<Option<CryptoHash>, NodeError> {
         self.spawn_and_receive(move |validator, sender| {
             validator.do_blob_last_used_by(blob_id, sender)
         })
@@ -567,15 +568,19 @@ where
     async fn do_blob_last_used_by(
         self,
         blob_id: BlobId,
-        sender: oneshot::Sender<Result<CryptoHash, NodeError>>,
-    ) -> Result<(), Result<CryptoHash, NodeError>> {
+        sender: oneshot::Sender<Result<Option<CryptoHash>, NodeError>>,
+    ) -> Result<(), Result<Option<CryptoHash>, NodeError>> {
         let validator = self.client.lock().await;
         let certificate_hash = validator
             .state
             .storage_client()
             .read_blob_state(blob_id)
             .await
-            .map(|blob_state| blob_state.last_used_by)
+            .map(|blob_state| Some(blob_state.last_used_by))
+            .or_else(|err| match err {
+                ViewError::NotFound(_) | ViewError::BlobsNotFound(_) => Ok(None),
+                other => Err(other),
+            })
             .map_err(Into::into);
 
         sender.send(certificate_hash)

@@ -55,7 +55,7 @@ pub enum RpcMessage {
     DownloadPendingBlobResponse(Box<BlobContent>),
     DownloadConfirmedBlockResponse(Box<ConfirmedBlock>),
     DownloadCertificatesResponse(Vec<ConfirmedBlockCertificate>),
-    BlobLastUsedByResponse(Box<CryptoHash>),
+    BlobLastUsedByResponse(Option<CryptoHash>),
     MissingBlobIdsResponse(Vec<BlobId>),
 
     // Internal to a validator
@@ -205,7 +205,6 @@ impl TryFrom<RpcMessage> for CryptoHash {
     type Error = NodeError;
     fn try_from(message: RpcMessage) -> Result<Self, Self::Error> {
         match message {
-            RpcMessage::BlobLastUsedByResponse(hash) => Ok(*hash),
             RpcMessage::GenesisConfigHashResponse(hash) => Ok(*hash),
             RpcMessage::Error(error) => Err(*error),
             _ => Err(NodeError::UnexpectedMessage),
