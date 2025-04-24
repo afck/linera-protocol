@@ -1087,6 +1087,7 @@ where
         committee: &Committee,
         certificate: ValidatedBlockCertificate,
     ) -> Result<ConfirmedBlockCertificate, ChainClientError> {
+        debug!(round = %certificate.round, "Submitting block for confirmation");
         let hashed_value = ConfirmedBlock::new(certificate.inner().block().clone());
         let finalize_action = CommunicateAction::FinalizeBlock {
             certificate: Box::new(certificate),
@@ -1111,6 +1112,10 @@ where
         proposal: Box<BlockProposal>,
         value: T,
     ) -> Result<GenericCertificate<T>, ChainClientError> {
+        debug!(
+            round = %proposal.content.round,
+            "Submitting block proposal to validators"
+        );
         let submit_action = CommunicateAction::SubmitBlock {
             proposal,
             blob_ids: value.required_blob_ids().into_iter().collect(),
@@ -2509,7 +2514,7 @@ where
         // Otherwise we have to re-propose the highest validated block, if there is one.
         let pending_proposal = self.state().pending_proposal().clone();
         let (block, blobs) = if let Some(locking) = &info.manager.requested_locking {
-            let (block, blobs) = match &**locking {
+            match &**locking {
                 LockingBlock::Regular(certificate) => {
                     let blob_ids = certificate.block().required_blob_ids();
                     let blobs = local_node
@@ -2518,6 +2523,7 @@ where
                         .ok_or_else(|| {
                             ChainClientError::InternalError("Missing local locking blobs")
                         })?;
+                    debug!("Retrying locking block from round {}", certificate.round);
                     (certificate.block().clone(), blobs)
                 }
                 LockingBlock::Fast(proposal) => {
@@ -2533,10 +2539,10 @@ where
                         .stage_block_execution(proposed_block, None, blobs.clone())
                         .await?
                         .0;
+                    debug!("Retrying locking block from fast round.");
                     (block, blobs)
                 }
-            };
-            (block, blobs)
+            }
         } else if let Some(pending_proposal) = pending_proposal {
             // Otherwise we are free to propose our own pending block.
             // Use the round number assuming there are oracle responses.
@@ -2550,6 +2556,7 @@ where
             let (block, _) = self
                 .stage_block_execution(proposed_block, round, pending_proposal.blobs.clone())
                 .await?;
+            debug!("Proposing the local pending block.");
             (block, pending_proposal.blobs)
         } else {
             return Ok(ClientOutcome::Committed(None)); // Nothing to do.
@@ -2566,6 +2573,7 @@ where
             Either::Left(round) => round,
             Either::Right(timeout) => return Ok(ClientOutcome::WaitForTimeout(timeout)),
         };
+        debug!("Proposing block for round {}", round);
 
         let already_handled_locally = info
             .manager
@@ -2614,6 +2622,7 @@ where
                 .await?;
             self.finalize_block(&committee, certificate).await?
         };
+        debug!(round = %certificate.round, "Sending confirmed block to validators");
         self.update_validators(Some(&committee)).await?;
         Ok(ClientOutcome::Committed(Some(certificate)))
     }
@@ -2649,6 +2658,10 @@ where
         let LockingBlock::Regular(certificate) = *locking else {
             panic!("Should have a locking validated block");
         };
+        debug!(
+            round = %certificate.round,
+            "Finalizing locking block"
+        );
         let committee = self.local_committee().await?;
         match self.finalize_block(&committee, certificate.clone()).await {
             Ok(certificate) => Ok(ClientOutcome::Committed(Some(certificate))),

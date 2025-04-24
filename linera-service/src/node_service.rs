@@ -40,7 +40,7 @@ use serde_json::json;
 use thiserror::Error as ThisError;
 use tokio::sync::OwnedRwLockReadGuard;
 use tower_http::cors::CorsLayer;
-use tracing::{debug, error, info, instrument, trace};
+use tracing::{error, info, instrument, trace};
 
 use crate::util;
 
@@ -963,7 +963,7 @@ where
         let chain_id: ChainId = chain_id.parse().map_err(NodeServiceError::InvalidChainId)?;
         let application_id: ApplicationId = application_id.parse()?;
 
-        debug!(
+        tracing::info!(
             "Processing request for application {application_id} on chain {chain_id}:\n{:?}",
             &request
         );
@@ -971,6 +971,7 @@ where
             .0
             .handle_service_request(application_id, request.into_bytes(), chain_id)
             .await?;
+        tracing::info!("Response: {:?}", &response);
 
         Ok(response)
     }

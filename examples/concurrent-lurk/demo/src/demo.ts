@@ -59,7 +59,10 @@ export async function lineraService(wallet: number | undefined, port: number, _q
 
   // Spawn the linera service process.
   // This is the equivalent of command.spawn() in Rust.
-  const child: ChildProcess = spawn('linera', args);
+  const child: ChildProcess = spawn('linera', args, {
+    env: { ...process.env, RUST_LOG: 'info,linera_core::client=debug' },
+    stdio: 'inherit',
+  });
 
   // Save the child handle in the global map keyed by port.
   SERVICE_HANDLES.set(port, child);
@@ -114,7 +117,7 @@ async function lineraCreate(
 }
 
 // Ultra-simple GraphQL client using plain fetch
-async function gqlRequest(url: string, query: string, variables = {}, timeoutMs = 1000) {
+async function gqlRequest(url: string, query: string, variables = {}, timeoutMs = 100000) {
   // Create an AbortController for timeout management
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
