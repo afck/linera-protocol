@@ -60,7 +60,12 @@ static LOAD_SERVICE_LATENCY: LazyLock<HistogramVec> = LazyLock::new(|| {
 
 pub(crate) type ExecutionStateSender = mpsc::UnboundedSender<ExecutionRequest>;
 
-impl<C> ExecutionStateView<C>
+pub(crate) struct ExecutionStateActor<'a, C> {
+    pub state: &'a mut ExecutionStateView<C>,
+    pub resource_controller: &'a mut ResourceController<Option<AccountOwner>>,
+}
+
+impl<C> ExecutionStateActor<'_, C>
 where
     C: Context + Clone + Send + Sync + 'static,
     C::Extra: ExecutionRuntimeContext,
@@ -79,12 +84,14 @@ where
                 bcs::from_bytes(blob.bytes())?
             }
             None => {
-                self.system
+                self.state
+                    .system
                     .describe_application(id, Some(txn_tracker))
                     .await?
             }
         };
         let code = self
+            .state
             .context()
             .extra()
             .get_user_contract(&description)
@@ -108,9 +115,15 @@ where
                 let blob = description.clone();
                 bcs::from_bytes(blob.bytes())?
             }
-            None => self.system.describe_application(id, txn_tracker).await?,
+            None => {
+                self.state
+                    .system
+                    .describe_application(id, txn_tracker)
+                    .await?
+            }
         };
         let code = self
+            .state
             .context()
             .extra()
             .get_user_service(&description)
@@ -122,7 +135,6 @@ where
     pub(crate) async fn handle_request(
         &mut self,
         request: ExecutionRequest,
-        resource_controller: &mut ResourceController<Option<AccountOwner>>,
     ) -> Result<(), ExecutionError> {
         use ExecutionRequest::*;
         match request {
@@ -146,22 +158,28 @@ where
             }
 
             ChainBalance { callback } => {
-                let balance = *self.system.balance.get();
+                let balance = *self.state.system.balance.get();
                 callback.respond(balance);
             }
 
             OwnerBalance { owner, callback } => {
-                let balance = self.system.balances.get(&owner).await?.unwrap_or_default();
+                let balance = self
+                    .state
+                    .system
+                    .balances
+                    .get(&owner)
+                    .await?
+                    .unwrap_or_default();
                 callback.respond(balance);
             }
 
             OwnerBalances { callback } => {
-                let balances = self.system.balances.index_values().await?;
+                let balances = self.state.system.balances.index_values().await?;
                 callback.respond(balances.into_iter().collect());
             }
 
             BalanceOwners { callback } => {
-                let owners = self.system.balances.indices().await?;
+                let owners = self.state.system.balances.indices().await?;
                 callback.respond(owners);
             }
 
@@ -173,7 +191,8 @@ where
                 application_id,
                 callback,
             } => callback.respond(
-                self.system
+                self.state
+                    .system
                     .transfer(
                         signer,
                         Some(application_id),
@@ -192,7 +211,8 @@ where
                 application_id,
                 callback,
             } => callback.respond(
-                self.system
+                self.state
+                    .system
                     .claim(
                         signer,
                         Some(application_id),
@@ -205,17 +225,17 @@ where
             ),
 
             SystemTimestamp { callback } => {
-                let timestamp = *self.system.timestamp.get();
+                let timestamp = *self.state.system.timestamp.get();
                 callback.respond(timestamp);
             }
 
             ChainOwnership { callback } => {
-                let ownership = self.system.ownership.get().clone();
+                let ownership = self.state.system.ownership.get().clone();
                 callback.respond(ownership);
             }
 
             ContainsKey { id, key, callback } => {
-                let view = self.users.try_load_entry(&id).await?;
+                let view = self.state.users.try_load_entry(&id).await?;
                 let result = match view {
                     Some(view) => view.contains_key(&key).await?,
                     None => false,
@@ -224,7 +244,7 @@ where
             }
 
             ContainsKeys { id, keys, callback } => {
-                let view = self.users.try_load_entry(&id).await?;
+                let view = self.state.users.try_load_entry(&id).await?;
                 let result = match view {
                     Some(view) => view.contains_keys(keys).await?,
                     None => vec![false; keys.len()],
@@ -233,7 +253,7 @@ where
             }
 
             ReadMultiValuesBytes { id, keys, callback } => {
-                let view = self.users.try_load_entry(&id).await?;
+                let view = self.state.users.try_load_entry(&id).await?;
                 let values = match view {
                     Some(view) => view.multi_get(keys).await?,
                     None => vec![None; keys.len()],
@@ -242,7 +262,7 @@ where
             }
 
             ReadValueBytes { id, key, callback } => {
-                let view = self.users.try_load_entry(&id).await?;
+                let view = self.state.users.try_load_entry(&id).await?;
                 let result = match view {
                     Some(view) => view.get(&key).await?,
                     None => None,
@@ -255,7 +275,7 @@ where
                 key_prefix,
                 callback,
             } => {
-                let view = self.users.try_load_entry(&id).await?;
+                let view = self.state.users.try_load_entry(&id).await?;
                 let result = match view {
                     Some(view) => view.find_keys_by_prefix(&key_prefix).await?,
                     None => Vec::new(),
@@ -268,7 +288,7 @@ where
                 key_prefix,
                 callback,
             } => {
-                let view = self.users.try_load_entry(&id).await?;
+                let view = self.state.users.try_load_entry(&id).await?;
                 let result = match view {
                     Some(view) => view.find_key_values_by_prefix(&key_prefix).await?,
                     None => Vec::new(),
@@ -281,7 +301,7 @@ where
                 batch,
                 callback,
             } => {
-                let mut view = self.users.try_load_entry_mut(&id).await?;
+                let mut view = self.state.users.try_load_entry_mut(&id).await?;
                 view.write_batch(batch).await?;
                 callback.respond(());
             }
@@ -302,6 +322,7 @@ where
                     application_permissions,
                 };
                 let chain_id = self
+                    .state
                     .system
                     .open_chain(config, parent_id, block_height, timestamp, &mut txn_tracker)
                     .await?;
@@ -312,11 +333,11 @@ where
                 application_id,
                 callback,
             } => {
-                let app_permissions = self.system.application_permissions.get();
+                let app_permissions = self.state.system.application_permissions.get();
                 if !app_permissions.can_close_chain(&application_id) {
                     callback.respond(Err(ExecutionError::UnauthorizedApplication(application_id)));
                 } else {
-                    self.system.close_chain().await?;
+                    self.state.system.close_chain().await?;
                     callback.respond(Ok(()));
                 }
             }
@@ -326,11 +347,12 @@ where
                 application_permissions,
                 callback,
             } => {
-                let app_permissions = self.system.application_permissions.get();
+                let app_permissions = self.state.system.application_permissions.get();
                 if !app_permissions.can_change_application_permissions(&application_id) {
                     callback.respond(Err(ExecutionError::UnauthorizedApplication(application_id)));
                 } else {
-                    self.system
+                    self.state
+                        .system
                         .application_permissions
                         .set(application_permissions);
                     callback.respond(Ok(()));
@@ -347,6 +369,7 @@ where
                 txn_tracker,
             } => {
                 let create_application_result = self
+                    .state
                     .system
                     .create_application(
                         chain_id,
@@ -377,6 +400,7 @@ where
                     .ok_or_else(|| ExecutionError::UnauthorizedHttpRequest(url.clone()))?;
 
                 let (_epoch, committee) = self
+                    .state
                     .system
                     .current_committee()
                     .ok_or_else(|| ExecutionError::UnauthorizedHttpRequest(url.clone()))?;
@@ -409,33 +433,34 @@ where
                 }
 
                 callback.respond(
-                    self.receive_http_response(response, response_size_limit)
+                    self.state
+                        .receive_http_response(response, response_size_limit)
                         .await?,
                 );
             }
 
             ReadBlobContent { blob_id, callback } => {
-                let blob = self.system.read_blob_content(blob_id).await?;
+                let blob = self.state.system.read_blob_content(blob_id).await?;
                 if blob_id.blob_type == BlobType::Data {
-                    resource_controller
-                        .with_state(&mut self.system)
+                    self.resource_controller
+                        .with_state(&mut self.state.system)
                         .await?
                         .track_blob_read(blob.bytes().len() as u64)?;
                 }
-                let is_new = self.system.blob_used(None, blob_id).await?;
+                let is_new = self.state.system.blob_used(None, blob_id).await?;
                 callback.respond((blob, is_new))
             }
 
             AssertBlobExists { blob_id, callback } => {
-                self.system.assert_blob_exists(blob_id).await?;
+                self.state.system.assert_blob_exists(blob_id).await?;
                 // Treating this as reading a size-0 blob for fee purposes.
                 if blob_id.blob_type == BlobType::Data {
-                    resource_controller
-                        .with_state(&mut self.system)
+                    self.resource_controller
+                        .with_state(&mut self.state.system)
                         .await?
                         .track_blob_read(0)?;
                 }
-                callback.respond(self.system.blob_used(None, blob_id).await?)
+                callback.respond(self.state.system.blob_used(None, blob_id).await?)
             }
 
             NextEventIndex {
@@ -443,6 +468,7 @@ where
                 callback,
             } => {
                 let count = self
+                    .state
                     .stream_event_counts
                     .get_mut_or_default(&stream_id)
                     .await?;
@@ -452,7 +478,7 @@ where
             }
 
             ReadEvent { event_id, callback } => {
-                let event_value = self.context().extra().get_event(event_id).await?;
+                let event_value = self.state.context().extra().get_event(event_id).await?;
                 callback.respond(event_value);
             }
 
@@ -463,6 +489,7 @@ where
                 callback,
             } => {
                 let subscriptions = self
+                    .state
                     .system
                     .event_subscriptions
                     .get_mut_or_default(&(chain_id, stream_id))
@@ -483,19 +510,20 @@ where
             } => {
                 let key = (chain_id, stream_id);
                 let subscriptions = self
+                    .state
                     .system
                     .event_subscriptions
                     .get_mut_or_default(&key)
                     .await?;
                 subscriptions.applications.remove(&subscriber_app_id);
                 if subscriptions.applications.is_empty() {
-                    self.system.event_subscriptions.remove(&key)?;
+                    self.state.system.event_subscriptions.remove(&key)?;
                 }
                 callback.respond(());
             }
 
             GetApplicationPermissions { callback } => {
-                let app_permissions = self.system.application_permissions.get();
+                let app_permissions = self.state.system.application_permissions.get();
                 callback.respond(app_permissions.clone());
             }
         }
