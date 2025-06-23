@@ -585,7 +585,13 @@ impl<Env: Environment> Benchmark<Env> {
             }
 
             let start = Instant::now();
-            let incoming_bundles = chain_client.pending_message_bundles().await?;
+            let result = chain_client.pending_message_bundles().await;
+            let incoming_bundles = if let Err(e) = result {
+                warn!("Error getting pending message bundles: {}", e);
+                Vec::new()
+            } else {
+                result?
+            };
             chain_client
                 .submit_fast_block_proposal(&committee, &operations, &incoming_bundles, chain_owner)
                 .await?;
