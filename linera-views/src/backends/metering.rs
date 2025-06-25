@@ -5,6 +5,7 @@
 
 use std::{
     collections::{btree_map::Entry, BTreeMap},
+    future::Future,
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -412,6 +413,10 @@ where
             .with_label_values(&[])
             .observe(key_values_size as f64);
         Ok(result)
+    }
+
+    fn check(&self, key: &[u8]) -> impl Future<Output = Result<(), Self::Error>> {
+        self.store.check(key)
     }
 }
 

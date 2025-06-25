@@ -65,6 +65,62 @@ pub struct Batch {
     pub operations: Vec<WriteOperation>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum OpType {
+    Del,
+    DelPfx,
+    Put,
+}
+
+impl Batch {
+    /// Log
+    pub fn pretty_log(&self, s: &str) {
+        let mut prev = OpType::Put;
+        let mut count = 0;
+        tracing::info!("WRITE {s}");
+        for op in &self.operations {
+            match op {
+                WriteOperation::Delete { key } => {
+                    if prev == OpType::Del {
+                        count += 1;
+                        continue;
+                    }
+                    if count > 1 {
+                        tracing::info!("{prev:?}×{}", count - 1)
+                    }
+                    count = 1;
+                    prev = OpType::Del;
+                    tracing::info!("DEL {}", hex::encode(&key));
+                }
+                WriteOperation::DeletePrefix { key_prefix } => {
+                    if prev == OpType::DelPfx {
+                        count += 1;
+                        continue;
+                    }
+                    if count > 1 {
+                        tracing::info!("{prev:?}×{}", count - 1)
+                    }
+                    count = 1;
+                    prev = OpType::DelPfx;
+                    tracing::info!("DEL PREFIX {}", hex::encode(&key_prefix));
+                }
+                WriteOperation::Put { key, value: _ } => {
+                    if prev == OpType::Put {
+                        count += 1;
+                        continue;
+                    }
+                    if count > 1 {
+                        tracing::info!("{prev:?}×{}", count - 1)
+                    }
+                    count = 1;
+                    prev = OpType::Put;
+                    tracing::info!("PUT {}", hex::encode(&key));
+                }
+            }
+        }
+    }
+}
+
 /// A batch of deletions and insertions that operate on disjoint keys, thus can be
 /// executed in any order.
 #[derive(Default, Serialize, Deserialize)]

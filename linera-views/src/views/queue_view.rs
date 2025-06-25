@@ -48,12 +48,29 @@ enum KeyTag {
 
 /// A view that supports a FIFO queue for values of type `T`.
 #[derive(Debug)]
-pub struct QueueView<C, T> {
+pub struct QueueView<C, T>
+where
+    C: Context,
+{
     context: C,
     stored_indices: Range<usize>,
     front_delete_count: usize,
     delete_storage_first: bool,
     new_back_values: VecDeque<T>,
+}
+
+impl<C, T> Drop for QueueView<C, T>
+where
+    C: Context,
+{
+    fn drop(&mut self) {
+        tracing::info!(
+            "Dropping QueueView {}, stored_indices={}..{}",
+            hex::encode(&self.context.base_key().bytes),
+            self.stored_indices.start,
+            self.stored_indices.end,
+        );
+    }
 }
 
 impl<C, T> View for QueueView<C, T>
@@ -74,8 +91,28 @@ where
     }
 
     fn post_load(context: C, values: &[Option<Vec<u8>>]) -> Result<Self, ViewError> {
-        let stored_indices =
+        let stored_indices: Range<usize> =
             from_bytes_option_or_default(values.first().ok_or(ViewError::PostLoadValuesError)?)?;
+        if stored_indices.start == 0 && stored_indices.end == 300 {
+            let key = context.base_key().base_tag(KeyTag::Store as u8);
+            let fut = async {
+                context.store().check(&key).await.unwrap();
+            };
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
+                Err(_) => tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(fut),
+            }
+        }
+        tracing::info!(
+            "New QueueView {}, stored_indices={}..{}",
+            hex::encode(&context.base_key().bytes),
+            stored_indices.start,
+            stored_indices.end,
+        );
         Ok(Self {
             context,
             stored_indices,
@@ -108,16 +145,28 @@ where
     }
 
     fn flush(&mut self, batch: &mut Batch) -> Result<bool, ViewError> {
+        tracing::info!("QV {} flush", hex::encode(&self.context.base_key().bytes));
         let mut delete_view = false;
         if self.delete_storage_first {
             batch.delete_key_prefix(self.context.base_key().bytes.clone());
             delete_view = true;
         }
         if self.stored_count() == 0 {
+            tracing::info!(
+                "QV {} stored_count() == 0; deleting prefix with KeyTag::Index.",
+                hex::encode(&self.context.base_key().bytes)
+            );
             let key_prefix = self.context.base_key().base_tag(KeyTag::Index as u8);
             batch.delete_key_prefix(key_prefix);
             self.stored_indices = Range::default();
         } else if self.front_delete_count > 0 {
+            tracing::info!(
+                "QV {} front_delete_count == {}; deleting entries {}..{}",
+                hex::encode(&self.context.base_key().bytes),
+                self.front_delete_count,
+                self.stored_indices.start,
+                self.stored_indices.start + self.front_delete_count,
+            );
             let deletion_range = self.stored_indices.clone().take(self.front_delete_count);
             self.stored_indices.start += self.front_delete_count;
             for index in deletion_range {
@@ -129,6 +178,13 @@ where
             }
         }
         if !self.new_back_values.is_empty() {
+            tracing::info!(
+                "QV {} new_back_values.len() == {}, putting entries {}..{}",
+                hex::encode(&self.context.base_key().bytes),
+                self.new_back_values.len(),
+                self.stored_indices.end,
+                self.stored_indices.end + self.new_back_values.len(),
+            );
             delete_view = false;
             for value in &self.new_back_values {
                 let key = self
@@ -141,9 +197,16 @@ where
             self.new_back_values.clear();
         }
         if !self.delete_storage_first || !self.stored_indices.is_empty() {
+            tracing::info!(
+                "QV {} storing si={}..{}",
+                hex::encode(&self.context.base_key().bytes),
+                self.stored_indices.start,
+                self.stored_indices.end,
+            );
             let key = self.context.base_key().base_tag(KeyTag::Store as u8);
             batch.put_key_value(key, &self.stored_indices)?;
         }
+        // batch.pretty_log("qv");
         self.front_delete_count = 0;
         self.delete_storage_first = false;
         Ok(delete_view)
@@ -171,7 +234,7 @@ where
     }
 }
 
-impl<C, T> QueueView<C, T> {
+impl<C: Context, T> QueueView<C, T> {
     fn stored_count(&self) -> usize {
         if self.delete_storage_first {
             0
@@ -300,7 +363,7 @@ where
     async fn read_context(&self, range: Range<usize>) -> Result<Vec<T>, ViewError> {
         let count = range.len();
         let mut keys = Vec::with_capacity(count);
-        for index in range {
+        for index in range.clone() {
             let key = self
                 .context
                 .base_key()
@@ -308,12 +371,33 @@ where
             keys.push(key)
         }
         let mut values = Vec::with_capacity(count);
-        for entry in self.context.store().read_multi_values(keys).await? {
+        let values_vec = self
+            .context
+            .store()
+            .read_multi_values::<T>(keys.clone())
+            .await?;
+        for entry in &values_vec {
             match entry {
                 None => {
+                    self.context
+                        .store()
+                        .check(&self.context.base_key().base_tag(KeyTag::Store as u8))
+                        .await?;
+                    tracing::error!(
+                        "QV {} read_context; found expected keys: {}:{}, {}:{}, {}:{}, {}:{}",
+                        hex::encode(&self.context.base_key().bytes),
+                        range.start,
+                        values_vec[0].is_some(),
+                        range.start + 1,
+                        values_vec[1].is_some(),
+                        range.start + 300,
+                        values_vec[300].is_some(),
+                        range.start + 301,
+                        values_vec[301].is_some(),
+                    );
                     return Err(ViewError::MissingEntries);
                 }
-                Some(value) => values.push(value),
+                Some(value) => values.push(value.clone()),
             }
         }
         Ok(values)
@@ -344,7 +428,7 @@ where
             let stored_remainder = self.stored_count();
             let start = self.stored_indices.end - stored_remainder;
             if count <= stored_remainder {
-                values.extend(self.read_context(start..(start + count)).await?);
+                values.extend(self.read_context(start..(start + count)).await.unwrap());
             } else {
                 values.extend(self.read_context(start..self.stored_indices.end).await?);
                 values.extend(
@@ -487,7 +571,9 @@ mod graphql {
         graphql::{hash_name, mangle},
     };
 
-    impl<C: Send + Sync, T: async_graphql::OutputType> async_graphql::TypeName for QueueView<C, T> {
+    impl<C: Send + Sync + Context, T: async_graphql::OutputType> async_graphql::TypeName
+        for QueueView<C, T>
+    {
         fn type_name() -> Cow<'static, str> {
             format!(
                 "QueueView_{}_{:08x}",

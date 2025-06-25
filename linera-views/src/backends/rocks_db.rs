@@ -222,6 +222,7 @@ impl RocksDbStoreExecutor {
         write_root_key: bool,
     ) -> Result<(), RocksDbStoreInternalError> {
         let mut inner_batch = rocksdb::WriteBatchWithTransaction::default();
+        // batch.pretty_log("rdb");
         for operation in batch.operations {
             match operation {
                 WriteOperation::Delete { key } => {

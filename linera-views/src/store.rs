@@ -98,6 +98,11 @@ pub trait ReadableKeyValueStore: WithError {
             Ok(values)
         }
     }
+
+    /// Prints the value for the given key.
+    fn check(&self, _key: &[u8]) -> impl Future<Output = Result<(), Self::Error>> {
+        async { Ok(()) }
+    }
 }
 
 /// Low-level, asynchronous write key-value operations. Useful for storage APIs not based on views.

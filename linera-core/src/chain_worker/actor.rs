@@ -318,6 +318,7 @@ where
             Box::pin(self.handle_request(request).instrument(span)).await;
         }
 
+        tracing::info!("Dropping worker for chain {:.8}", self.worker.chain_id());
         if let Some(thread) = self.service_runtime_thread {
             drop(self.worker);
             thread.join().await

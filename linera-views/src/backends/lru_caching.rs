@@ -5,6 +5,7 @@
 
 use std::{
     collections::{btree_map, hash_map::RandomState, BTreeMap},
+    future::Future,
     sync::{Arc, Mutex},
 };
 
@@ -419,6 +420,32 @@ where
         key_prefix: &[u8],
     ) -> Result<Self::KeyValues, Self::Error> {
         self.store.find_key_values_by_prefix(key_prefix).await
+    }
+
+    fn check(&self, key: &[u8]) -> impl Future<Output = Result<(), Self::Error>> {
+        async move {
+            let cached_value = self
+                .cache
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .query_read_value(key);
+            let stored_value = self.store.read_value_bytes(key).await?;
+            if let Some(Some(v)) = &cached_value {
+                if Some(v) != stored_value.as_ref() {
+                    tracing::error!("MISMATCH");
+                }
+                // assert_eq!(Some(v), stored_value.as_ref());
+            }
+            tracing::error!(
+                "Key {}, cached value: {:?}, stored value: {:?}",
+                hex::encode(key),
+                cached_value.map(|o| o.map(|x| hex::encode(&x))),
+                stored_value.map(|x| hex::encode(&x))
+            );
+            Ok(())
+        }
     }
 }
 

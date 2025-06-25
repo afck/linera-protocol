@@ -79,6 +79,7 @@ where
         chain_id: ChainId,
         service_runtime_endpoint: Option<ServiceRuntimeEndpoint>,
     ) -> Result<Self, WorkerError> {
+        tracing::info!("Loading chain state {chain_id:.8}");
         let chain = storage.load_chain(chain_id).await?;
 
         Ok(ChainWorkerState {
