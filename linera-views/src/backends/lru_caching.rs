@@ -10,6 +10,7 @@ use std::{
 };
 
 use linked_hash_map::LinkedHashMap;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -84,6 +85,7 @@ pub const DEFAULT_STORAGE_CACHE_CONFIG: StorageCacheConfig = StorageCacheConfig 
     max_cache_entries: 1000,
 };
 
+#[derive(Debug, PartialEq)]
 enum CacheEntry {
     DoesNotExist,
     Exists,
@@ -110,6 +112,7 @@ struct LruPrefixCache {
     total_size: usize,
     /// Whether we have exclusive R/W access to the keys under the root key of the store.
     has_exclusive_access: bool,
+    id: u64,
 }
 
 impl LruPrefixCache {
@@ -121,6 +124,7 @@ impl LruPrefixCache {
             storage_cache_config,
             total_size: 0,
             has_exclusive_access: false,
+            id: rand::thread_rng().next_u64(),
         }
     }
 
@@ -297,6 +301,15 @@ where
             .inc();
         let value = self.store.read_value_bytes(key).await?;
         let mut cache = cache.lock().unwrap();
+        if let Some(value) = &value {
+            if value.len() == 16 {
+                tracing::info!(
+                    "KEY {} READ VALUE BYTES {}",
+                    hex::encode(&key),
+                    hex::encode(value)
+                );
+            }
+        }
         cache.insert_read_value(key.to_vec(), &value);
         Ok(value)
     }
@@ -404,6 +417,15 @@ where
                 .into_iter()
                 .zip(miss_keys.into_iter().zip(values))
             {
+                if let Some(value) = &value {
+                    if value.len() == 16 {
+                        tracing::info!(
+                            "KEY {} READ VALUE {}",
+                            hex::encode(&key),
+                            hex::encode(value)
+                        );
+                    }
+                }
                 cache.insert_read_value(key, &value);
                 result[i] = value;
             }
@@ -439,10 +461,11 @@ where
                 // assert_eq!(Some(v), stored_value.as_ref());
             }
             tracing::error!(
-                "Key {}, cached value: {:?}, stored value: {:?}",
+                "Key {}, cached value: {:?}, stored value: {:?}, id: {}",
                 hex::encode(key),
                 cached_value.map(|o| o.map(|x| hex::encode(&x))),
-                stored_value.map(|x| hex::encode(&x))
+                stored_value.map(|x| hex::encode(&x)),
+                self.cache.as_ref().unwrap().lock().unwrap().id
             );
             Ok(())
         }
@@ -466,8 +489,22 @@ where
             for operation in &batch.operations {
                 match operation {
                     WriteOperation::Put { key, value } => {
+                        if value.len() == 16 {
+                            tracing::info!(
+                                "KEY {} VALUE {} CACHE {}",
+                                hex::encode(key),
+                                hex::encode(value),
+                                cache.id
+                            );
+                        }
                         let cache_entry = CacheEntry::Value(value.to_vec());
                         cache.insert(key.to_vec(), cache_entry);
+                        if value.len() == 16 {
+                            assert_eq!(
+                                cache.map.get(key),
+                                Some(&CacheEntry::Value(value.to_vec()))
+                            );
+                        }
                     }
                     WriteOperation::Delete { key } => {
                         let cache_entry = CacheEntry::DoesNotExist;

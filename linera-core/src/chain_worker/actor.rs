@@ -313,16 +313,18 @@ where
         )>,
     ) {
         trace!("Starting `ChainWorkerActor`");
+        let chain_id = self.worker.chain_id();
+        tracing::info!("Starting worker for chain {chain_id:.8}");
 
         while let Some((request, span)) = incoming_requests.recv().await {
             Box::pin(self.handle_request(request).instrument(span)).await;
         }
 
-        tracing::info!("Dropping worker for chain {:.8}", self.worker.chain_id());
         if let Some(thread) = self.service_runtime_thread {
             drop(self.worker);
             thread.join().await
         }
+        tracing::info!("Dropped worker for chain {:.8}", chain_id);
 
         trace!("`ChainWorkerActor` finished");
     }
