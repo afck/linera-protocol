@@ -10,7 +10,7 @@ use std::{
 };
 
 use custom_debug_derive::Debug;
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt as _};
 use linera_base::{
     crypto::{CryptoHash, ValidatorPublicKey},
     data_types::{ApplicationDescription, Blob, BlockHeight, Epoch, TimeDelta, Timestamp},
@@ -28,6 +28,7 @@ use linera_execution::{
 };
 use linera_storage::{Clock as _, Storage};
 use tokio::sync::{mpsc, oneshot, OwnedRwLockReadGuard};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, instrument, trace, warn, Instrument as _};
 
 use super::{config::ChainWorkerConfig, state::ChainWorkerState, DeliveryNotifier};
@@ -289,14 +290,15 @@ where
     )]
     pub async fn handle_requests(
         self,
-        mut incoming_requests: mpsc::UnboundedReceiver<(
+        incoming_requests: mpsc::UnboundedReceiver<(
             ChainWorkerRequest<StorageClient::Context>,
             tracing::Span,
         )>,
     ) -> Result<(), WorkerError> {
         trace!("Starting `ChainWorkerActor`");
 
-        while let Some((request, span)) = incoming_requests.recv().await {
+        let mut incoming_requests = UnboundedReceiverStream::new(incoming_requests).fuse();
+        while let Some((request, span)) = incoming_requests.next().await {
             let (service_runtime_thread, service_runtime_endpoint) = {
                 if self.config.long_lived_services {
                     let (thread, endpoint) = Self::spawn_service_runtime_actor(self.chain_id).await;
@@ -323,7 +325,7 @@ where
             loop {
                 futures::select! {
                     () = self.sleep_until_timeout().fuse() => break,
-                    maybe_request = incoming_requests.recv().fuse() => {
+                    maybe_request = incoming_requests.next() => {
                         let Some((request, span)) = maybe_request else {
                             break; // Request sender was dropped.
                         };
