@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
@@ -14,7 +14,7 @@ use linera_base::{
     data_types::{ApplicationDescription, ArithmeticError, Blob, BlockHeight, Epoch, Round},
     doc_scalar,
     hashed::Hashed,
-    identifiers::{AccountOwner, ApplicationId, BlobId, ChainId, EventId},
+    identifiers::{AccountOwner, ApplicationId, BlobId, ChainId, EventId, StreamId},
     time::timer::{sleep, timeout},
 };
 #[cfg(with_testing)]
@@ -52,9 +52,10 @@ mod metrics {
     use std::sync::LazyLock;
 
     use linera_base::prometheus_util::{
-        exponential_bucket_interval, register_histogram_vec, register_int_counter_vec,
+        exponential_bucket_interval, register_histogram_vec, register_int_counter,
+        register_int_counter_vec,
     };
-    use prometheus::{HistogramVec, IntCounterVec};
+    use prometheus::{HistogramVec, IntCounter, IntCounterVec};
 
     pub static NUM_ROUNDS_IN_CERTIFICATE: LazyLock<HistogramVec> = LazyLock::new(|| {
         register_histogram_vec(
@@ -89,11 +90,10 @@ mod metrics {
         )
     });
 
-    pub static CHAIN_INFO_QUERIES: LazyLock<IntCounterVec> = LazyLock::new(|| {
-        register_int_counter_vec(
+    pub static CHAIN_INFO_QUERIES: LazyLock<IntCounter> = LazyLock::new(|| {
+        register_int_counter(
             "chain_info_queries",
             "Number of chain info queries processed",
-            &[],
         )
     });
 }
@@ -132,6 +132,7 @@ pub enum Reason {
     NewBlock {
         height: BlockHeight,
         hash: CryptoHash,
+        event_streams: BTreeSet<StreamId>,
     },
     NewIncomingBundle {
         origin: ChainId,
@@ -926,7 +927,7 @@ where
     ) -> Result<(ChainInfoResponse, NetworkActions), WorkerError> {
         trace!("{} <-- {:?}", self.nickname, query);
         #[cfg(with_metrics)]
-        metrics::CHAIN_INFO_QUERIES.with_label_values(&[]).inc();
+        metrics::CHAIN_INFO_QUERIES.inc();
         let result = self
             .query_chain_worker(query.chain_id, move |callback| {
                 ChainWorkerRequest::HandleChainInfoQuery { query, callback }

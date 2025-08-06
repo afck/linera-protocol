@@ -2273,11 +2273,7 @@ impl<Env: Environment> ChainClient<Env> {
         let committee = info.current_committee()?;
         let height = info.next_block_height;
         let round = info.manager.current_round;
-        let action = CommunicateAction::RequestTimeout {
-            height,
-            round,
-            chain_id,
-        };
+        let action = CommunicateAction::RequestTimeout { round, chain_id };
         let value = Timeout::new(chain_id, height, info.epoch);
         let certificate = Box::new(
             self.client
@@ -2373,6 +2369,7 @@ impl<Env: Environment> ChainClient<Env> {
 
         let mutex = self.state().client_mutex();
         let _guard = mutex.lock_owned().await;
+        // TOOD: We shouldn't need to call this explicitly.
         match self.process_pending_block_without_prepare().await? {
             ClientOutcome::Committed(Some(certificate)) => {
                 return Ok(ExecuteBlockOutcome::Conflict(certificate))
@@ -2862,9 +2859,12 @@ impl<Env: Environment> ChainClient<Env> {
         let submit_block_proposal_start = std::time::Instant::now();
         let certificate = if round.is_fast() {
             let hashed_value = ConfirmedBlock::new(block);
-            self.client
+            let certificate = self
+                .client
                 .submit_block_proposal(&committee, proposal, hashed_value)
-                .await?
+                .await?;
+            self.update_validators(Some(&committee)).await?;
+            certificate
         } else {
             let hashed_value = ValidatedBlock::new(block);
             let certificate = self
