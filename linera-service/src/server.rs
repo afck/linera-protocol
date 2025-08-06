@@ -357,7 +357,7 @@ enum ServerCommand {
         /// The duration in milliseconds after which an idle chain worker will free its memory.
         #[arg(
             long = "chain-worker-ttl-ms",
-            default_value = "30000",
+            default_value = "0",
             value_parser = util::parse_millis
         )]
         chain_worker_ttl: Duration,

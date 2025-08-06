@@ -296,16 +296,28 @@ where
             return self.store.read_value_bytes(key).await;
         };
         // First inquiring in the read_value_bytes LRU
-        {
+        let cached_value = {
             let mut cache = cache.lock().unwrap();
-            if let Some(value) = cache.query_read_value(key) {
-                #[cfg(with_metrics)]
-                metrics::READ_VALUE_CACHE_HIT_COUNT
-                    .with_label_values(&[])
-                    .inc();
-                return Ok(value);
-            }
+            cache.query_read_value(key)
+        };
+        
+        if let Some(cached_value) = cached_value {
+            #[cfg(with_metrics)]
+            metrics::READ_VALUE_CACHE_HIT_COUNT
+                .with_label_values(&[])
+                .inc();
+            
+            // DEBUG: Verify cache consistency with backing storage
+            let storage_value = self.store.read_value_bytes(key).await?;
+            assert_eq!(
+                cached_value, storage_value,
+                "Cache/storage mismatch for key {:?}: cache={:?}, storage={:?}",
+                key, cached_value, storage_value
+            );
+            
+            return Ok(cached_value);
         }
+        
         #[cfg(with_metrics)]
         metrics::READ_VALUE_CACHE_MISS_COUNT
             .with_label_values(&[])
@@ -320,16 +332,29 @@ where
         let Some(cache) = &self.cache else {
             return self.store.contains_key(key).await;
         };
-        {
+        
+        let cached_result = {
             let mut cache = cache.lock().unwrap();
-            if let Some(value) = cache.query_contains_key(key) {
-                #[cfg(with_metrics)]
-                metrics::CONTAINS_KEY_CACHE_HIT_COUNT
-                    .with_label_values(&[])
-                    .inc();
-                return Ok(value);
-            }
+            cache.query_contains_key(key)
+        };
+        
+        if let Some(cached_result) = cached_result {
+            #[cfg(with_metrics)]
+            metrics::CONTAINS_KEY_CACHE_HIT_COUNT
+                .with_label_values(&[])
+                .inc();
+            
+            // DEBUG: Verify cache consistency with backing storage
+            let storage_result = self.store.contains_key(key).await?;
+            assert_eq!(
+                cached_result, storage_result,
+                "Cache/storage mismatch for contains_key({:?}): cache={}, storage={}",
+                key, cached_result, storage_result
+            );
+            
+            return Ok(cached_result);
         }
+        
         #[cfg(with_metrics)]
         metrics::CONTAINS_KEY_CACHE_MISS_COUNT
             .with_label_values(&[])
@@ -348,6 +373,9 @@ where
         let mut results = vec![false; size];
         let mut indices = Vec::new();
         let mut key_requests = Vec::new();
+        let mut cached_indices = Vec::new();
+        
+        // Collect cache results without holding the lock
         {
             let mut cache = cache.lock().unwrap();
             for i in 0..size {
@@ -357,6 +385,7 @@ where
                         .with_label_values(&[])
                         .inc();
                     results[i] = value;
+                    cached_indices.push(i);
                 } else {
                     #[cfg(with_metrics)]
                     metrics::CONTAINS_KEY_CACHE_MISS_COUNT
@@ -367,6 +396,8 @@ where
                 }
             }
         }
+        
+        // Handle cache misses
         if !key_requests.is_empty() {
             let key_results = self.store.contains_keys(key_requests.clone()).await?;
             let mut cache = cache.lock().unwrap();
@@ -375,6 +406,20 @@ where
                 cache.insert_contains_key(key, result);
             }
         }
+        
+        // DEBUG: Verify cache consistency with backing storage for cached entries
+        if !cached_indices.is_empty() {
+            let cached_keys: Vec<_> = cached_indices.iter().map(|&i| keys[i].clone()).collect();
+            let storage_results = self.store.contains_keys(cached_keys.clone()).await?;
+            for (i, &cache_index) in cached_indices.iter().enumerate() {
+                assert_eq!(
+                    results[cache_index], storage_results[i],
+                    "Cache/storage mismatch for contains_keys({:?}): cache={}, storage={}",
+                    cached_keys[i], results[cache_index], storage_results[i]
+                );
+            }
+        }
+        
         Ok(results)
     }
 
@@ -389,6 +434,10 @@ where
         let mut result = Vec::with_capacity(keys.len());
         let mut cache_miss_indices = Vec::new();
         let mut miss_keys = Vec::new();
+        let mut cached_indices = Vec::new();
+        let keys_copy = keys.clone(); // Keep a copy for debug verification
+        
+        // Collect cache results without holding the lock
         {
             let mut cache = cache.lock().unwrap();
             for (i, key) in keys.into_iter().enumerate() {
@@ -398,6 +447,7 @@ where
                         .with_label_values(&[])
                         .inc();
                     result.push(value);
+                    cached_indices.push(i);
                 } else {
                     #[cfg(with_metrics)]
                     metrics::READ_VALUE_CACHE_MISS_COUNT
@@ -409,6 +459,8 @@ where
                 }
             }
         }
+        
+        // Handle cache misses
         if !miss_keys.is_empty() {
             let values = self
                 .store
@@ -423,6 +475,20 @@ where
                 result[i] = value;
             }
         }
+        
+        // DEBUG: Verify cache consistency with backing storage for cached entries
+        if !cached_indices.is_empty() {
+            let cached_keys: Vec<_> = cached_indices.iter().map(|&i| keys_copy[i].clone()).collect();
+            let storage_values = self.store.read_multi_values_bytes(cached_keys.clone()).await?;
+            for (i, &cache_index) in cached_indices.iter().enumerate() {
+                assert_eq!(
+                    result[cache_index], storage_values[i],
+                    "Cache/storage mismatch for read_multi_values_bytes({:?}): cache={:?}, storage={:?}",
+                    cached_keys[i], result[cache_index], storage_values[i]
+                );
+            }
+        }
+        
         Ok(result)
     }
 
@@ -520,7 +586,7 @@ where
         let store = LruCachingStore::new(
             store,
             self.config.clone(),
-            /* has_exclusive_access */ true,
+            /* has_exclusive_access */ false,
         );
         Ok(store)
     }
