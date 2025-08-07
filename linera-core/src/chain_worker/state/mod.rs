@@ -433,6 +433,7 @@ where
     }
 
     /// Ensures that the current chain is active, returning an error otherwise.
+    #[instrument(skip_all)]
     async fn ensure_is_active(&mut self) -> Result<(), WorkerError> {
         if !self.knows_chain_is_active {
             let local_time = self.storage.clock().current_time();
@@ -446,6 +447,7 @@ where
 
     /// Reads the blobs from the chain manager or from storage. Returns an error if any are
     /// missing.
+    #[instrument(skip_all)]
     async fn get_required_blobs(
         &self,
         required_blob_ids: impl IntoIterator<Item = BlobId>,

@@ -8,6 +8,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use linera_base::hex;
 use linked_hash_map::LinkedHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +21,30 @@ use crate::{
     common::get_interval,
     store::{KeyValueDatabase, ReadableKeyValueStore, WithError, WritableKeyValueStore},
 };
+
+/// Format a byte slice as hex with elision for long values.
+/// Shows at most 10 hex digits at the beginning and 10 at the end.
+fn format_hex_elided(data: &[u8]) -> String {
+    const MAX_CHARS: usize = 60; // 30 chars for start + 30 for end
+    let hex_string = hex::encode(data);
+
+    if hex_string.len() <= MAX_CHARS {
+        hex_string
+    } else {
+        format!(
+            "{}...{}",
+            &hex_string[..(MAX_CHARS / 2)],
+            &hex_string[hex_string.len() - (MAX_CHARS / 2)..]
+        )
+    }
+}
+
+/// Format an optional value as hex with elision.
+fn format_option_hex_elided(value: &Option<Vec<u8>>) -> String {
+    value
+        .as_ref()
+        .map_or("None".to_string(), |v| format_hex_elided(v))
+}
 
 #[cfg(with_metrics)]
 mod metrics {
@@ -140,6 +165,16 @@ impl LruPrefixCache {
 
     /// Inserts an entry into the cache.
     pub fn insert(&mut self, key: Vec<u8>, cache_entry: CacheEntry) {
+        let entry_type = match &cache_entry {
+            CacheEntry::DoesNotExist => "DoesNotExist".to_string(),
+            CacheEntry::Exists => "Exists".to_string(),
+            CacheEntry::Value(v) => format!("Value({})", format_hex_elided(v)),
+        };
+        tracing::info!(
+            "LruPrefixCache::insert: key={}, entry_type={}",
+            format_hex_elided(&key),
+            entry_type
+        );
         let key_value_size = key.len() + cache_entry.size();
         if (matches!(cache_entry, CacheEntry::DoesNotExist) && !self.has_exclusive_access)
             || key_value_size > self.config.max_entry_size
@@ -171,6 +206,11 @@ impl LruPrefixCache {
 
     /// Inserts a read_value entry into the cache.
     pub fn insert_read_value(&mut self, key: Vec<u8>, value: &Option<Vec<u8>>) {
+        tracing::info!(
+            "LruPrefixCache::insert_read_value: key={}, value={}",
+            format_hex_elided(&key),
+            format_option_hex_elided(value)
+        );
         let cache_entry = match value {
             None => CacheEntry::DoesNotExist,
             Some(vec) => CacheEntry::Value(vec.to_vec()),
@@ -180,6 +220,11 @@ impl LruPrefixCache {
 
     /// Inserts a read_value entry into the cache.
     pub fn insert_contains_key(&mut self, key: Vec<u8>, result: bool) {
+        tracing::info!(
+            "LruPrefixCache::insert_contains_key: key={}, result={}",
+            format_hex_elided(&key),
+            result
+        );
         let cache_entry = match result {
             false => CacheEntry::DoesNotExist,
             true => CacheEntry::Exists,
@@ -190,6 +235,10 @@ impl LruPrefixCache {
     /// Marks cached keys that match the prefix as deleted. Importantly, this does not
     /// create new entries in the cache.
     pub fn delete_prefix(&mut self, key_prefix: &[u8]) {
+        tracing::info!(
+            "LruPrefixCache::delete_prefix: key_prefix={}",
+            format_hex_elided(key_prefix)
+        );
         if self.has_exclusive_access {
             for (key, value) in self.map.range_mut(get_interval(key_prefix.to_vec())) {
                 *self.queue.get_mut(key).unwrap() = key.len();
@@ -216,6 +265,10 @@ impl LruPrefixCache {
     /// database. If `None` is returned, the entry might exist in the database but is
     /// not in the cache.
     pub fn query_read_value(&mut self, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        tracing::info!(
+            "LruPrefixCache::query_read_value: key={}",
+            format_hex_elided(key)
+        );
         let result = match self.map.get(key) {
             None => None,
             Some(entry) => match entry {
@@ -235,6 +288,10 @@ impl LruPrefixCache {
     /// Returns `Some(true)` or `Some(false)` if we know that the entry does or does not
     /// exist in the database. Returns `None` if that information is not in the cache.
     pub fn query_contains_key(&mut self, key: &[u8]) -> Option<bool> {
+        tracing::info!(
+            "LruPrefixCache::query_contains_key: key={}",
+            format_hex_elided(key)
+        );
         let result = self
             .map
             .get(key)
@@ -307,12 +364,21 @@ where
                 .with_label_values(&[])
                 .inc();
 
+            tracing::info!(
+                "Cache hit for read_value_bytes: key={}, value={}",
+                format_hex_elided(key),
+                format_option_hex_elided(&cached_value)
+            );
+
             // DEBUG: Verify cache consistency with backing storage
             let storage_value = self.store.read_value_bytes(key).await?;
             assert_eq!(
-                cached_value, storage_value,
-                "Cache/storage mismatch for key {:?}: cache={:?}, storage={:?}",
-                key, cached_value, storage_value
+                cached_value,
+                storage_value,
+                "Cache/storage mismatch for key {}: cache={}, storage={}",
+                format_hex_elided(key),
+                format_option_hex_elided(&cached_value),
+                format_option_hex_elided(&storage_value)
             );
 
             return Ok(cached_value);
@@ -322,9 +388,29 @@ where
         metrics::READ_VALUE_CACHE_MISS_COUNT
             .with_label_values(&[])
             .inc();
+
+        tracing::info!(
+            "Cache miss for read_value_bytes: key={}",
+            format_hex_elided(key)
+        );
+
         let value = self.store.read_value_bytes(key).await?;
+
+        tracing::info!(
+            "Storage read for read_value_bytes: key={}, value={}",
+            format_hex_elided(key),
+            format_option_hex_elided(&value)
+        );
+
         let mut cache = cache.lock().unwrap();
         cache.insert_read_value(key.to_vec(), &value);
+
+        tracing::info!(
+            "Cache insert for read_value_bytes: key={}, value={}",
+            format_hex_elided(key),
+            format_option_hex_elided(&value)
+        );
+
         Ok(value)
     }
 
@@ -344,12 +430,21 @@ where
                 .with_label_values(&[])
                 .inc();
 
+            tracing::info!(
+                "Cache hit for contains_key: key={}, result={}",
+                format_hex_elided(key),
+                cached_result
+            );
+
             // DEBUG: Verify cache consistency with backing storage
             let storage_result = self.store.contains_key(key).await?;
             assert_eq!(
-                cached_result, storage_result,
-                "Cache/storage mismatch for contains_key({:?}): cache={}, storage={}",
-                key, cached_result, storage_result
+                cached_result,
+                storage_result,
+                "Cache/storage mismatch for contains_key({}): cache={}, storage={}",
+                format_hex_elided(key),
+                cached_result,
+                storage_result
             );
 
             return Ok(cached_result);
@@ -359,9 +454,29 @@ where
         metrics::CONTAINS_KEY_CACHE_MISS_COUNT
             .with_label_values(&[])
             .inc();
+
+        tracing::info!(
+            "Cache miss for contains_key: key={}",
+            format_hex_elided(key)
+        );
+
         let result = self.store.contains_key(key).await?;
+
+        tracing::info!(
+            "Storage read for contains_key: key={}, result={}",
+            format_hex_elided(key),
+            result
+        );
+
         let mut cache = cache.lock().unwrap();
         cache.insert_contains_key(key.to_vec(), result);
+
+        tracing::info!(
+            "Cache insert for contains_key: key={}, result={}",
+            format_hex_elided(key),
+            result
+        );
+
         Ok(result)
     }
 
@@ -384,6 +499,14 @@ where
                     metrics::CONTAINS_KEY_CACHE_HIT_COUNT
                         .with_label_values(&[])
                         .inc();
+
+                    tracing::info!(
+                        "Cache hit for contains_keys[{}]: key={}, result={}",
+                        i,
+                        format_hex_elided(&keys[i]),
+                        value
+                    );
+
                     results[i] = value;
                     cached_indices.push(i);
                 } else {
@@ -391,6 +514,13 @@ where
                     metrics::CONTAINS_KEY_CACHE_MISS_COUNT
                         .with_label_values(&[])
                         .inc();
+
+                    tracing::info!(
+                        "Cache miss for contains_keys[{}]: key={}",
+                        i,
+                        format_hex_elided(&keys[i])
+                    );
+
                     indices.push(i);
                     key_requests.push(keys[i].clone());
                 }
@@ -399,11 +529,28 @@ where
 
         // Handle cache misses
         if !key_requests.is_empty() {
+            tracing::info!(
+                "Storage read for contains_keys: {} keys",
+                key_requests.len()
+            );
+
             let key_results = self.store.contains_keys(key_requests.clone()).await?;
             let mut cache = cache.lock().unwrap();
             for ((index, result), key) in indices.into_iter().zip(key_results).zip(key_requests) {
+                tracing::info!(
+                    "Storage read result for contains_keys: key={}, result={}",
+                    format_hex_elided(&key),
+                    result
+                );
+
                 results[index] = result;
-                cache.insert_contains_key(key, result);
+                cache.insert_contains_key(key.clone(), result);
+
+                tracing::info!(
+                    "Cache insert for contains_keys: key={}, result={}",
+                    format_hex_elided(&key),
+                    result
+                );
             }
         }
 
@@ -413,9 +560,12 @@ where
             let storage_results = self.store.contains_keys(cached_keys.clone()).await?;
             for (i, &cache_index) in cached_indices.iter().enumerate() {
                 assert_eq!(
-                    results[cache_index], storage_results[i],
-                    "Cache/storage mismatch for contains_keys({:?}): cache={}, storage={}",
-                    cached_keys[i], results[cache_index], storage_results[i]
+                    results[cache_index],
+                    storage_results[i],
+                    "Cache/storage mismatch for contains_keys({}): cache={}, storage={}",
+                    format_hex_elided(&cached_keys[i]),
+                    results[cache_index],
+                    storage_results[i]
                 );
             }
         }
@@ -446,6 +596,14 @@ where
                     metrics::READ_VALUE_CACHE_HIT_COUNT
                         .with_label_values(&[])
                         .inc();
+
+                    tracing::info!(
+                        "Cache hit for read_multi_values_bytes[{}]: key={}, value={}",
+                        i,
+                        format_hex_elided(&key),
+                        format_option_hex_elided(&value)
+                    );
+
                     result.push(value);
                     cached_indices.push(i);
                 } else {
@@ -453,6 +611,13 @@ where
                     metrics::READ_VALUE_CACHE_MISS_COUNT
                         .with_label_values(&[])
                         .inc();
+
+                    tracing::info!(
+                        "Cache miss for read_multi_values_bytes[{}]: key={}",
+                        i,
+                        format_hex_elided(&key)
+                    );
+
                     result.push(None);
                     cache_miss_indices.push(i);
                     miss_keys.push(key);
@@ -462,6 +627,11 @@ where
 
         // Handle cache misses
         if !miss_keys.is_empty() {
+            tracing::info!(
+                "Storage read for read_multi_values_bytes: {} keys",
+                miss_keys.len()
+            );
+
             let values = self
                 .store
                 .read_multi_values_bytes(miss_keys.clone())
@@ -471,7 +641,20 @@ where
                 .into_iter()
                 .zip(miss_keys.into_iter().zip(values))
             {
-                cache.insert_read_value(key, &value);
+                tracing::info!(
+                    "Storage read result for read_multi_values_bytes: key={}, value={}",
+                    format_hex_elided(&key),
+                    format_option_hex_elided(&value)
+                );
+
+                cache.insert_read_value(key.clone(), &value);
+
+                tracing::info!(
+                    "Cache insert for read_multi_values_bytes: key={}, value={}",
+                    format_hex_elided(&key),
+                    format_option_hex_elided(&value)
+                );
+
                 result[i] = value;
             }
         }
@@ -486,11 +669,19 @@ where
                 .store
                 .read_multi_values_bytes(cached_keys.clone())
                 .await?;
+            tracing::info!("read_multi_values_bytes");
             for (i, &cache_index) in cached_indices.iter().enumerate() {
                 assert_eq!(
-                    result[cache_index], storage_values[i],
-                    "Cache/storage mismatch for read_multi_values_bytes({:?}): cache={:?}, storage={:?}",
-                    cached_keys[i], result[cache_index], storage_values[i]
+                    result[cache_index],
+                    storage_values[i],
+                    "Cache/storage mismatch for read_multi_values_bytes({}): cache={}, storage={}",
+                    hex::encode(&cached_keys[i]),
+                    result[cache_index]
+                        .as_ref()
+                        .map_or("None".to_string(), hex::encode),
+                    storage_values[i]
+                        .as_ref()
+                        .map_or("None".to_string(), hex::encode)
                 );
             }
         }
@@ -527,19 +718,47 @@ where
             for operation in &batch.operations {
                 match operation {
                     WriteOperation::Put { key, value } => {
+                        tracing::info!(
+                            "Write operation PUT: key={}, value={}",
+                            format_hex_elided(key),
+                            format_hex_elided(value)
+                        );
+
                         let cache_entry = CacheEntry::Value(value.to_vec());
                         cache.insert(key.to_vec(), cache_entry);
+
+                        tracing::info!(
+                            "Cache insert for PUT: key={}, value={}",
+                            format_hex_elided(key),
+                            format_hex_elided(value)
+                        );
                     }
                     WriteOperation::Delete { key } => {
+                        tracing::info!("Write operation DELETE: key={}", format_hex_elided(key));
+
                         let cache_entry = CacheEntry::DoesNotExist;
                         cache.insert(key.to_vec(), cache_entry);
+
+                        tracing::info!("Cache insert for DELETE: key={}", format_hex_elided(key));
                     }
                     WriteOperation::DeletePrefix { key_prefix } => {
+                        tracing::info!(
+                            "Write operation DELETE_PREFIX: key_prefix={}",
+                            format_hex_elided(key_prefix)
+                        );
+
                         cache.delete_prefix(key_prefix);
+
+                        tracing::info!(
+                            "Cache delete_prefix: key_prefix={}",
+                            format_hex_elided(key_prefix)
+                        );
                     }
                 }
             }
         }
+        tracing::info!("Storage write_batch: {} operations", batch.operations.len());
+
         self.store.write_batch(batch).await
     }
 

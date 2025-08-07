@@ -279,6 +279,7 @@ where
     }
 
     /// Processes a confirmed block (aka a commit).
+    #[instrument(skip_all)]
     pub(super) async fn process_confirmed_block(
         &mut self,
         certificate: ConfirmedBlockCertificate,
@@ -695,6 +696,7 @@ where
     /// Stores the chain state in persistent storage.
     ///
     /// Waits until the [`ChainStateView`] is no longer shared before persisting the changes.
+    #[instrument(skip_all)]
     async fn save(&mut self) -> Result<(), WorkerError> {
         self.state.clear_shared_chain_view().await;
         self.state.chain.save().await?;
