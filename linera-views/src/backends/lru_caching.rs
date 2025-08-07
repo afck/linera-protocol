@@ -130,6 +130,8 @@ impl CacheEntry {
 /// This data structure is inspired by the crate `lru-cache` but was modified to support
 /// range deletions.
 struct LruPrefixCache {
+    /// Unique identifier for this cache instance
+    id: String,
     map: BTreeMap<Vec<u8>, CacheEntry>,
     queue: LinkedHashMap<Vec<u8>, usize, RandomState>,
     config: StorageCacheConfig,
@@ -141,7 +143,34 @@ struct LruPrefixCache {
 impl LruPrefixCache {
     /// Creates an `LruPrefixCache`.
     pub fn new(config: StorageCacheConfig, has_exclusive_access: bool) -> Self {
+        use std::fmt::Write;
+
+        // Generate a random unique ID for this cache instance
+        let id = {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let random_bytes: [u8; 4] = rand::random();
+            let mut id = String::new();
+            write!(
+                &mut id,
+                "{:016x}{:08x}",
+                timestamp,
+                u32::from_le_bytes(random_bytes)
+            )
+            .unwrap();
+            id
+        };
+
+        tracing::info!(
+            "LruPrefixCache::new: creating new cache instance with id={}",
+            id
+        );
+
         Self {
+            id,
             map: BTreeMap::new(),
             queue: LinkedHashMap::new(),
             config,
@@ -171,7 +200,8 @@ impl LruPrefixCache {
             CacheEntry::Value(v) => format!("Value({})", format_hex_elided(v)),
         };
         tracing::info!(
-            "LruPrefixCache::insert: key={}, entry_type={}",
+            "LruPrefixCache::insert: id={}, key={}, entry_type={}",
+            self.id,
             format_hex_elided(&key),
             entry_type
         );
@@ -207,7 +237,8 @@ impl LruPrefixCache {
     /// Inserts a read_value entry into the cache.
     pub fn insert_read_value(&mut self, key: Vec<u8>, value: &Option<Vec<u8>>) {
         tracing::info!(
-            "LruPrefixCache::insert_read_value: key={}, value={}",
+            "LruPrefixCache::insert_read_value: id={}, key={}, value={}",
+            self.id,
             format_hex_elided(&key),
             format_option_hex_elided(value)
         );
@@ -221,7 +252,8 @@ impl LruPrefixCache {
     /// Inserts a read_value entry into the cache.
     pub fn insert_contains_key(&mut self, key: Vec<u8>, result: bool) {
         tracing::info!(
-            "LruPrefixCache::insert_contains_key: key={}, result={}",
+            "LruPrefixCache::insert_contains_key: id={}, key={}, result={}",
+            self.id,
             format_hex_elided(&key),
             result
         );
@@ -236,7 +268,8 @@ impl LruPrefixCache {
     /// create new entries in the cache.
     pub fn delete_prefix(&mut self, key_prefix: &[u8]) {
         tracing::info!(
-            "LruPrefixCache::delete_prefix: key_prefix={}",
+            "LruPrefixCache::delete_prefix: id={}, key_prefix={}",
+            self.id,
             format_hex_elided(key_prefix)
         );
         if self.has_exclusive_access {
@@ -266,7 +299,8 @@ impl LruPrefixCache {
     /// not in the cache.
     pub fn query_read_value(&mut self, key: &[u8]) -> Option<Option<Vec<u8>>> {
         tracing::info!(
-            "LruPrefixCache::query_read_value: key={}",
+            "LruPrefixCache::query_read_value: id={}, key={}",
+            self.id,
             format_hex_elided(key)
         );
         let result = match self.map.get(key) {
@@ -289,7 +323,8 @@ impl LruPrefixCache {
     /// exist in the database. Returns `None` if that information is not in the cache.
     pub fn query_contains_key(&mut self, key: &[u8]) -> Option<bool> {
         tracing::info!(
-            "LruPrefixCache::query_contains_key: key={}",
+            "LruPrefixCache::query_contains_key: id={}, key={}",
+            self.id,
             format_hex_elided(key)
         );
         let result = self
@@ -372,11 +407,16 @@ where
 
             // DEBUG: Verify cache consistency with backing storage
             let storage_value = self.store.read_value_bytes(key).await?;
+            let cache_id = {
+                let cache = cache.lock().unwrap();
+                cache.id.clone()
+            };
             assert_eq!(
                 cached_value,
                 storage_value,
-                "Cache/storage mismatch for key {}: cache={}, storage={}",
+                "Cache/storage mismatch for key {} (cache_id={}): cache={}, storage={}",
                 format_hex_elided(key),
+                cache_id,
                 format_option_hex_elided(&cached_value),
                 format_option_hex_elided(&storage_value)
             );
@@ -438,11 +478,16 @@ where
 
             // DEBUG: Verify cache consistency with backing storage
             let storage_result = self.store.contains_key(key).await?;
+            let cache_id = {
+                let cache = cache.lock().unwrap();
+                cache.id.clone()
+            };
             assert_eq!(
                 cached_result,
                 storage_result,
-                "Cache/storage mismatch for contains_key({}): cache={}, storage={}",
+                "Cache/storage mismatch for contains_key({}) (cache_id={}): cache={}, storage={}",
                 format_hex_elided(key),
+                cache_id,
                 cached_result,
                 storage_result
             );
@@ -558,12 +603,17 @@ where
         if !cached_indices.is_empty() {
             let cached_keys: Vec<_> = cached_indices.iter().map(|&i| keys[i].clone()).collect();
             let storage_results = self.store.contains_keys(cached_keys.clone()).await?;
+            let cache_id = {
+                let cache = cache.lock().unwrap();
+                cache.id.clone()
+            };
             for (i, &cache_index) in cached_indices.iter().enumerate() {
                 assert_eq!(
                     results[cache_index],
                     storage_results[i],
-                    "Cache/storage mismatch for contains_keys({}): cache={}, storage={}",
+                    "Cache/storage mismatch for contains_keys({}) (cache_id={}): cache={}, storage={}",
                     format_hex_elided(&cached_keys[i]),
+                    cache_id,
                     results[cache_index],
                     storage_results[i]
                 );
@@ -669,19 +719,24 @@ where
                 .store
                 .read_multi_values_bytes(cached_keys.clone())
                 .await?;
+            let cache_id = {
+                let cache = cache.lock().unwrap();
+                cache.id.clone()
+            };
             tracing::info!("read_multi_values_bytes");
             for (i, &cache_index) in cached_indices.iter().enumerate() {
                 assert_eq!(
                     result[cache_index],
                     storage_values[i],
-                    "Cache/storage mismatch for read_multi_values_bytes({}): cache={}, storage={}",
-                    hex::encode(&cached_keys[i]),
+                    "Cache/storage mismatch for read_multi_values_bytes({}) (cache_id={}): cache={}, storage={}",
+                    format_hex_elided(&cached_keys[i]),
+                    cache_id,
                     result[cache_index]
                         .as_ref()
-                        .map_or("None".to_string(), hex::encode),
+                        .map_or("None".to_string(), |x| format_hex_elided(x)),
                     storage_values[i]
                         .as_ref()
-                        .map_or("None".to_string(), hex::encode)
+                        .map_or("None".to_string(), |x| format_hex_elided(x))
                 );
             }
         }
