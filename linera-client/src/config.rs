@@ -169,6 +169,9 @@ impl GenesisConfig {
             .await
             .map_err(linera_chain::ChainError::from)?
         {
+            if description == self.network_description() {
+                return Ok(());
+            }
             return Err(Error::StorageIsAlreadyInitialized(Box::new(description)));
         }
         let network_description = self.network_description();

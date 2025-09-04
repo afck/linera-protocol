@@ -2464,6 +2464,7 @@ Make sure to use a Linera client compatible with this network.
         },
 
         _ => {
+            options.initialize_storage().boxed().await?;
             options.run_with_storage(Job(options.clone())).await??;
             Ok(0)
         }
