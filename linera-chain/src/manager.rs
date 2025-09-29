@@ -379,18 +379,16 @@ where
             return Ok(false); // We are not a validator.
         };
         ensure!(
-            round <= self.current_round(),
+            round == self.current_round(),
             ChainError::WrongRound(self.current_round())
         );
-        if round == self.current_round() {
-            let Some(round_timeout) = *self.round_timeout.get() else {
-                return Err(ChainError::RoundDoesNotTimeOut);
-            };
-            ensure!(
-                local_time >= round_timeout,
-                ChainError::NotTimedOutYet(round_timeout)
-            );
-        }
+        let Some(round_timeout) = *self.round_timeout.get() else {
+            return Err(ChainError::RoundDoesNotTimeOut);
+        };
+        ensure!(
+            local_time >= round_timeout,
+            ChainError::NotTimedOutYet(round_timeout)
+        );
         if let Some(vote) = self.timeout_vote.get() {
             if vote.round == round {
                 return Ok(false); // We already signed this timeout.
@@ -580,6 +578,12 @@ where
                     .iter()
                     .map(|proposal| proposal.content.round),
             )
+            .chain(
+                self.signed_proposal
+                    .get()
+                    .iter()
+                    .map(|proposal| proposal.content.round),
+            )
             .max()
             .unwrap_or_default()
             .max(self.ownership.get().first_round());
@@ -687,7 +691,7 @@ where
     /// Sets the signed proposal, if it is newer than the known one, and not from a single-leader
     /// round. Returns whether it was updated.
     pub fn update_signed_proposal(&mut self, proposal: &BlockProposal) -> bool {
-        if proposal.content.round > Round::MultiLeader(u32::MAX) {
+        if proposal.content.round > Round::SingleLeader(0) {
             return false;
         }
         if let Some(old_proposal) = self.signed_proposal.get() {
@@ -765,7 +769,6 @@ pub struct ChainManagerInfo {
     #[debug(skip_if = Option::is_none)]
     pub requested_locking: Option<Box<LockingBlock>>,
     /// Latest timeout certificate we have seen.
-    #[debug(skip_if = Option::is_none)]
     pub timeout: Option<Box<TimeoutCertificate>>,
     /// Latest vote we cast (either to validate or to confirm a block).
     #[debug(skip_if = Option::is_none)]

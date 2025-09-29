@@ -993,7 +993,10 @@ impl<Env: Environment> Client<Env> {
         let query = ChainInfoQuery::new(chain_id).with_manager_values();
         let remote_info = remote_node.handle_chain_info_query(query).await?;
 
-        info!("{:?}", remote_info);
+        info!(
+            "Info from {}: {:?}",
+            remote_node.public_key, remote_info.manager
+        );
 
         if let Some(new_info) = self
             .download_certificates_from(remote_node, chain_id, remote_info.next_block_height)
@@ -1920,15 +1923,15 @@ impl<Env: Environment> ChainClient<Env> {
 
         self.synchronize_to_known_height().await?;
 
-//        if self.has_other_owners(&info.manager.ownership) {
-            // For chains with any owner other than ourselves, we could be missing recent
-            // certificates created by other owners. Further synchronize blocks from the network.
-            // This is a best-effort that depends on network conditions.
+        //        if self.has_other_owners(&info.manager.ownership) {
+        // For chains with any owner other than ourselves, we could be missing recent
+        // certificates created by other owners. Further synchronize blocks from the network.
+        // This is a best-effort that depends on network conditions.
         let info = self
             .client
             .maybe_synchronize_chain_state(self.chain_id)
             .await?;
-//        }
+        //        }
 
         if info.epoch > self.client.admin_committees().await?.0 {
             self.client
@@ -3035,7 +3038,10 @@ impl<Env: Environment> ChainClient<Env> {
             .any(|proposal| proposal.content.round == manager.current_round)
             || (manager.current_round.is_fast() && has_oracle_responses);
         info!("conflict: {}", conflict);
-        info!("next candidate round: {:?}", manager.ownership.next_round(manager.current_round));
+        info!(
+            "next candidate round: {:?}",
+            manager.ownership.next_round(manager.current_round)
+        );
 
         let round = if !conflict {
             manager.current_round
@@ -3052,7 +3058,12 @@ impl<Env: Environment> ChainClient<Env> {
                 "Conflicting proposal in the current round",
             ));
         };
-        info!("can {} propose in round {}? {}", identity, round, manager.can_propose(identity, round));
+        info!(
+            "can {} propose in round {}? {}",
+            identity,
+            round,
+            manager.can_propose(identity, round)
+        );
         if manager.can_propose(identity, round) {
             return Ok(Either::Left(round));
         }

@@ -113,7 +113,7 @@ impl<N: ValidatorNode> RemoteNode<N> {
                 .await;
             match result {
                 Err(NodeError::MissingCertificateValue) => {
-                    warn!(
+                    tracing::debug!(
                         "Validator {} forgot a certificate value that they signed before",
                         self.public_key
                     );
@@ -135,7 +135,7 @@ impl<N: ValidatorNode> RemoteNode<N> {
                 .await;
             match result {
                 Err(NodeError::MissingCertificateValue) => {
-                    warn!(
+                    tracing::debug!(
                         "Validator {} forgot a certificate value that they signed before",
                         self.public_key
                     );

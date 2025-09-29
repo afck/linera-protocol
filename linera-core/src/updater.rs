@@ -22,6 +22,7 @@ use linera_base::{
 };
 use linera_chain::{
     data_types::{BlockProposal, LiteVote},
+    manager::LockingBlock,
     types::{ConfirmedBlock, GenericCertificate, ValidatedBlock, ValidatedBlockCertificate},
 };
 use linera_execution::{committee::Committee, system::EPOCH_STREAM_NAME};
@@ -451,6 +452,7 @@ where
             } else {
                 tracing::warn!("NOPE 0");
             }
+            // TODO: Deduplicate!!
             return Ok(());
         };
         // Figure out which certificates this validator is missing. In many cases, it's just the
@@ -517,7 +519,8 @@ where
             }
         }
         // If the remote node is missing a timeout certificate, send it as well.
-        let local_info = self.local_node.chain_info(chain_id).await?;
+        let query = ChainInfoQuery::new(chain_id).with_manager_values();
+        let local_info = self.local_node.handle_chain_info_query(query).await?.info;
         if let Some(cert) = local_info.manager.timeout {
             if (local_info.next_block_height, cert.round) >= (remote_height, remote_round) {
                 tracing::debug!("send_chain_information --> {:?}", cert);
@@ -527,6 +530,36 @@ where
             }
         } else {
             tracing::debug!("send_chain_information NOPE 2");
+        }
+        if let Some(proposal) = local_info.manager.requested_proposed {
+            tracing::info!("send_chain_information prop --> {:?}", proposal);
+            if let Err(err) = Box::pin(self.send_block_proposal(proposal, vec![])).await {
+                tracing::info!("Failed to propose: {err}");
+            }
+        }
+        if let Some(proposal) = local_info.manager.requested_signed_proposal {
+            tracing::info!("send_chain_information sig --> {:?}", proposal);
+            if let Err(err) = Box::pin(self.send_block_proposal(proposal, vec![])).await {
+                tracing::info!("Failed to propose: {err}");
+            }
+        }
+        match local_info.manager.requested_locking.map(|b| *b) {
+            Some(LockingBlock::Regular(validated)) => {
+                if let Err(err) = self
+                    .remote_node
+                    .handle_optimized_validated_certificate(
+                        &validated,
+                        CrossChainMessageDelivery::NonBlocking,
+                    )
+                    .await
+                {
+                    tracing::info!("Failed to send locking block: {err}");
+                }
+            }
+            Some(LockingBlock::Fast(_)) => {
+                tracing::error!("TODO: FAST")
+            }
+            None => {}
         }
         Ok(())
     }
@@ -605,7 +638,50 @@ where
             }
             CommunicateAction::RequestTimeout { round, height, .. } => {
                 let query = ChainInfoQuery::new(chain_id).with_timeout(height, round);
-                let info = self.remote_node.handle_chain_info_query(query).await?;
+                let info = match self
+                    .remote_node
+                    .handle_chain_info_query(query.clone())
+                    .await
+                {
+                    Ok(info) => info,
+                    Err(NodeError::WrongRound(validator_round)) => {
+                        tracing::info!(
+                            "Failed to request timeout from validator {} because it sees \
+                            chain {} at round {} instead of {}.",
+                            self.remote_node.public_key,
+                            chain_id,
+                            validator_round,
+                            round
+                        );
+                        // The timeout is for a different round, so we need to update the validator.
+                        // TODO: this should probably be more specific as to which rounds are retried.
+                        self.send_chain_information(
+                            chain_id,
+                            height,
+                            CrossChainMessageDelivery::NonBlocking,
+                        )
+                        .await?;
+                        self.remote_node
+                            .handle_chain_info_query(query.clone())
+                            .await?
+                    }
+                    Err(NodeError::UnexpectedBlockHeight {
+                        expected_block_height,
+                        found_block_height,
+                    }) if expected_block_height < found_block_height => {
+                        // The proposal is for a later block height, so we need to update the validator.
+                        self.send_chain_information(
+                            chain_id,
+                            found_block_height,
+                            CrossChainMessageDelivery::NonBlocking,
+                        )
+                        .await?;
+                        self.remote_node
+                            .handle_chain_info_query(query.clone())
+                            .await?
+                    }
+                    Err(err) => Err(err)?,
+                };
                 info.manager.timeout_vote.ok_or_else(|| {
                     NodeError::MissingVoteInValidatorResponse("request a timeout".into())
                 })?
