@@ -1263,6 +1263,74 @@ async fn test_open_chain() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Tests the system API call `creation_chain_id`.
+#[tokio::test]
+async fn test_creation_chain_id() -> anyhow::Result<()> {
+    let ownership = ChainOwnership::single(AccountPublicKey::test_key(1).into());
+    let balance = Amount::from_tokens(5);
+    let root_description =
+        dummy_chain_description_with_ownership_and_balance(0, ownership.clone(), balance);
+    let root_id = root_description.id();
+
+    // Create a child chain description.
+    let child_origin = ChainOrigin::Child {
+        parent: root_id,
+        block_height: BlockHeight(1),
+        chain_index: 0,
+    };
+    let child_config = root_description.config().clone();
+    let child_description = ChainDescription::new(child_origin, child_config, Timestamp::default());
+    let child_id = child_description.id();
+
+    let state = SystemExecutionState::new(root_description.clone());
+    let mut view = state.into_view().await;
+    view.context()
+        .extra()
+        .add_blobs([
+            Blob::new_chain_description(&root_description),
+            Blob::new_chain_description(&child_description),
+        ])
+        .await?;
+    let (application_id, application, blobs) = view.register_mock_application(0).await?;
+
+    let context = create_dummy_operation_context(root_id);
+
+    application.expect_call(ExpectedCall::execute_operation({
+        move |runtime, _operation| {
+            // Root chain should return None.
+            assert_eq!(runtime.creation_chain_id(root_id)?, None);
+            // Child chain should return the parent chain ID.
+            assert_eq!(runtime.creation_chain_id(child_id)?, Some(root_id));
+            Ok(vec![])
+        }
+    }));
+    application.expect_call(ExpectedCall::default_finalize());
+
+    let mut controller = ResourceController::default();
+    let operation = Operation::User {
+        application_id,
+        bytes: vec![],
+    };
+    let chain_description_blob_ids = [
+        root_id.description_blob_id(),
+        child_id.description_blob_id(),
+    ];
+    let oracle_blobs = blobs.iter().chain(chain_description_blob_ids.iter());
+    let mut txn_tracker = TransactionTracker::new(
+        Timestamp::from(0),
+        0,
+        0,
+        0,
+        Some(blob_oracle_responses(oracle_blobs)),
+        &[],
+    );
+    ExecutionStateActor::new(&mut view, &mut txn_tracker, &mut controller)
+        .execute_operation(context, operation)
+        .await?;
+
+    Ok(())
+}
+
 /// Tests the system API call `close_chain`.
 #[tokio::test]
 async fn test_close_chain() -> anyhow::Result<()> {
