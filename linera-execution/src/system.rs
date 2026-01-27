@@ -784,7 +784,7 @@ where
             return Ok(true);
         }
         let description_blob = self
-            .read_blob_content(BlobId::new(chain_id.0, BlobType::ChainDescription))
+            .read_blob_content(chain_id.description_blob_id())
             .await?;
         let description: ChainDescription = bcs::from_bytes(description_blob.bytes())?;
         let InitialChainConfig {

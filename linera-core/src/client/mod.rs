@@ -19,7 +19,7 @@ use linera_base::{
     crypto::{CryptoHash, Signer as _, ValidatorPublicKey},
     data_types::{ArithmeticError, Blob, BlockHeight, ChainDescription, Epoch, TimeDelta},
     ensure,
-    identifiers::{AccountOwner, BlobId, BlobType, ChainId, StreamId},
+    identifiers::{AccountOwner, BlobId, ChainId, StreamId},
     time::Duration,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -659,7 +659,7 @@ impl<Env: Environment> Client<Env> {
         &self,
         chain_id: ChainId,
     ) -> Result<ChainDescription, chain_client::Error> {
-        let chain_desc_id = BlobId::new(chain_id.0, BlobType::ChainDescription);
+        let chain_desc_id = chain_id.description_blob_id();
         let blob = self
             .local_node
             .storage_client()

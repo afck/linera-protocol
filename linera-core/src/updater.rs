@@ -18,7 +18,7 @@ use linera_base::{
     crypto::ValidatorPublicKey,
     data_types::{BlockHeight, Round, TimeDelta},
     ensure,
-    identifiers::{BlobId, BlobType, ChainId, StreamId},
+    identifiers::{BlobId, ChainId, StreamId},
     time::{timer::timeout, Duration, Instant},
 };
 use linera_chain::{
@@ -787,7 +787,7 @@ where
     ) -> Result<Box<ChainInfo>, chain_client::Error> {
         // Send chain description and all dependency chains
         self.send_chain_info_for_blobs(
-            &[BlobId::new(chain_id.0, BlobType::ChainDescription)],
+            &[chain_id.description_blob_id()],
             CrossChainMessageDelivery::NonBlocking,
         )
         .await?;

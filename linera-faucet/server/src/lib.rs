@@ -18,7 +18,7 @@ use linera_base::{
     bcs,
     crypto::{CryptoHash, ValidatorPublicKey},
     data_types::{Amount, ApplicationPermissions, ChainDescription, Timestamp},
-    identifiers::{AccountOwner, BlobId, BlobType, ChainId},
+    identifiers::{AccountOwner, BlobType, ChainId},
     ownership::ChainOwnership,
 };
 use linera_chain::{types::ConfirmedBlockCertificate, ChainError, ChainExecutionContext};
@@ -400,8 +400,7 @@ async fn get_chain_description_from_storage<S>(
 where
     S: Storage,
 {
-    // Create blob ID from chain ID - the chain ID is the hash of the chain description blob
-    let blob_id = BlobId::new(chain_id.0, BlobType::ChainDescription);
+    let blob_id = chain_id.description_blob_id();
 
     // Read the blob directly from storage
     let blob = storage
