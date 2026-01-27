@@ -1161,6 +1161,13 @@ impl From<ChainDescription> for ChainId {
     }
 }
 
+impl ChainId {
+    /// Converts the chain ID to the ID of the blob containing the [`ChainDescription`].
+    pub fn description_blob_id(self) -> BlobId {
+        BlobId::new(self.0, BlobType::ChainDescription)
+    }
+}
+
 bcs_scalar!(ApplicationId, "A unique identifier for a user application");
 doc_scalar!(DataBlobHash, "Hash of a Data Blob");
 doc_scalar!(

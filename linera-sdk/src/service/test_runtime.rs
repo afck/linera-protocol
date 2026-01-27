@@ -34,6 +34,7 @@ where
     query_application_handler: Mutex<Option<QueryApplicationHandler>>,
     expected_http_requests: Mutex<VecDeque<(http::Request, http::Response)>>,
     blobs: Mutex<Option<HashMap<DataBlobHash, Vec<u8>>>>,
+    chain_creation_parents: Mutex<Option<HashMap<ChainId, Option<ChainId>>>>,
     scheduled_operations: Mutex<Vec<Vec<u8>>>,
     key_value_store: KeyValueStore,
 }
@@ -65,6 +66,7 @@ where
             query_application_handler: Mutex::new(None),
             expected_http_requests: Mutex::new(VecDeque::new()),
             blobs: Mutex::new(None),
+            chain_creation_parents: Mutex::new(None),
             scheduled_operations: Mutex::new(vec![]),
             key_value_store: KeyValueStore::mock(),
         }
@@ -453,6 +455,16 @@ where
         self
     }
 
+    /// Configures the chain creation parent for the given chain ID.
+    pub fn set_chain_creation_parent(&self, chain_id: ChainId, parent: Option<ChainId>) -> &Self {
+        self.chain_creation_parents
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(chain_id, parent);
+        self
+    }
+
     /// Fetches a blob from a given hash.
     pub fn read_data_blob(&self, hash: DataBlobHash) -> Vec<u8> {
         self.blobs
@@ -464,6 +476,22 @@ where
                 panic!(
                     "Blob for hash {hash:?} has not been mocked, \
                     please call `MockServiceRuntime::set_blob` first"
+                )
+            })
+    }
+
+    /// Returns the chain ID of the chain that created the given chain, or `None` if it is a root
+    /// chain.
+    pub fn creation_chain_id(&self, chain_id: ChainId) -> Option<ChainId> {
+        self.chain_creation_parents
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|parents| parents.get(&chain_id).copied())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Chain creation parent for chain {chain_id:?} has not been mocked, \
+                    please call `MockServiceRuntime::set_chain_creation_parent` first"
                 )
             })
     }

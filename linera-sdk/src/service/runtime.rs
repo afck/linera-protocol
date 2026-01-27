@@ -154,6 +154,12 @@ where
         base_wit::read_data_blob(hash.into())
     }
 
+    /// Returns the chain ID of the chain that created the given chain, or `None` if it is a root
+    /// chain.
+    pub fn creation_chain_id(&self, chain_id: ChainId) -> Option<ChainId> {
+        base_wit::creation_chain_id(chain_id.into()).map(ChainId::from)
+    }
+
     /// Asserts that a data blob with the given hash exists in storage.
     pub fn assert_data_blob_exists(&self, hash: DataBlobHash) {
         base_wit::assert_data_blob_exists(hash.into())

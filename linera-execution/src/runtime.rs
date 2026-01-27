@@ -12,7 +12,7 @@ use custom_debug_derive::Debug;
 use linera_base::{
     data_types::{
         Amount, ApplicationPermissions, ArithmeticError, Blob, BlockHeight, Bytecode,
-        SendMessageRequest, Timestamp,
+        ChainDescription, ChainOrigin, SendMessageRequest, Timestamp,
     },
     ensure, http,
     identifiers::{
@@ -932,6 +932,20 @@ where
             .send_request(|callback| ExecutionRequest::ReadBlobContent { blob_id, callback })?
             .recv_response()?;
         Ok(content.into_vec_or_clone())
+    }
+
+    fn creation_chain_id(&mut self, chain_id: ChainId) -> Result<Option<ChainId>, ExecutionError> {
+        let this = self.inner();
+        let blob_id = chain_id.description_blob_id();
+        let content = this
+            .execution_state_sender
+            .send_request(|callback| ExecutionRequest::ReadBlobContent { blob_id, callback })?
+            .recv_response()?;
+        let description: ChainDescription = bcs::from_bytes(content.bytes())?;
+        Ok(match description.origin() {
+            ChainOrigin::Root(_) => None,
+            ChainOrigin::Child { parent, .. } => Some(parent),
+        })
     }
 
     fn assert_data_blob_exists(&mut self, hash: DataBlobHash) -> Result<(), ExecutionError> {

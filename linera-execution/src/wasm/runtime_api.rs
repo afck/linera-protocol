@@ -230,6 +230,19 @@ where
             .map_err(|error| RuntimeError::Custom(error.into()))
     }
 
+    /// Returns the chain ID of the chain that created the given chain, or `None` if it is a root
+    /// chain.
+    fn creation_chain_id(
+        caller: &mut Caller,
+        chain_id: ChainId,
+    ) -> Result<Option<ChainId>, RuntimeError> {
+        caller
+            .user_data_mut()
+            .runtime
+            .creation_chain_id(chain_id)
+            .map_err(|error| RuntimeError::Custom(error.into()))
+    }
+
     /// Asserts the existence of a data blob with the given hash.
     fn assert_data_blob_exists(
         caller: &mut Caller,

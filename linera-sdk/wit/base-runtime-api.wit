@@ -16,6 +16,7 @@ interface base-runtime-api {
     perform-http-request: func(request: http-request) -> http-response;
     assert-before: func(timestamp: timestamp);
     read-data-blob: func(hash: data-blob-hash) -> list<u8>;
+    creation-chain-id: func(chain-id: chain-id) -> option<chain-id>;
     assert-data-blob-exists: func(hash: data-blob-hash);
     log: func(message: string, level: log-level);
     contains-key-new: func(key: list<u8>) -> u32;

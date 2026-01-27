@@ -874,6 +874,10 @@ pub trait BaseRuntime {
     /// Reads a data blob specified by a given hash.
     fn read_data_blob(&mut self, hash: DataBlobHash) -> Result<Vec<u8>, ExecutionError>;
 
+    /// Returns the chain ID of the chain that created the given chain, or `None` if it is a root
+    /// chain.
+    fn creation_chain_id(&mut self, chain_id: ChainId) -> Result<Option<ChainId>, ExecutionError>;
+
     /// Asserts the existence of a data blob with the given hash.
     fn assert_data_blob_exists(&mut self, hash: DataBlobHash) -> Result<(), ExecutionError>;
 

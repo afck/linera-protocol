@@ -75,6 +75,7 @@ where
     expected_service_queries: VecDeque<(ApplicationId, String, String)>,
     expected_http_requests: VecDeque<(http::Request, http::Response)>,
     expected_read_data_blob_requests: VecDeque<(DataBlobHash, Vec<u8>)>,
+    expected_creation_chain_id_requests: VecDeque<(ChainId, Option<ChainId>)>,
     expected_assert_data_blob_exists_requests: VecDeque<(DataBlobHash, Option<()>)>,
     expected_has_empty_storage_requests: VecDeque<(ApplicationId, bool)>,
     expected_open_chain_calls: VecDeque<(ChainOwnership, ApplicationPermissions, Amount, ChainId)>,
@@ -125,6 +126,7 @@ where
             expected_service_queries: VecDeque::new(),
             expected_http_requests: VecDeque::new(),
             expected_read_data_blob_requests: VecDeque::new(),
+            expected_creation_chain_id_requests: VecDeque::new(),
             expected_assert_data_blob_exists_requests: VecDeque::new(),
             expected_has_empty_storage_requests: VecDeque::new(),
             expected_open_chain_calls: VecDeque::new(),
@@ -948,6 +950,16 @@ where
             .push_back((hash, response));
     }
 
+    /// Adds an expected `creation_chain_id` call, and the response it should return in the test.
+    pub fn add_expected_creation_chain_id_request(
+        &mut self,
+        chain_id: ChainId,
+        response: Option<ChainId>,
+    ) {
+        self.expected_creation_chain_id_requests
+            .push_back((chain_id, response));
+    }
+
     /// Adds an expected `assert_data_blob_exists` call, and the response it should return in the test.
     pub fn add_expected_assert_data_blob_exists_requests(
         &mut self,
@@ -1017,6 +1029,16 @@ where
         let maybe_request = self.expected_read_data_blob_requests.pop_front();
         let (expected_hash, response) = maybe_request.expect("Unexpected read_data_blob request");
         assert_eq!(hash, expected_hash);
+        response
+    }
+
+    /// Returns the chain ID of the chain that created the given chain, or `None` if it is a root
+    /// chain.
+    pub fn creation_chain_id(&mut self, chain_id: ChainId) -> Option<ChainId> {
+        let maybe_request = self.expected_creation_chain_id_requests.pop_front();
+        let (expected_chain_id, response) =
+            maybe_request.expect("Unexpected creation_chain_id request");
+        assert_eq!(chain_id, expected_chain_id);
         response
     }
 
