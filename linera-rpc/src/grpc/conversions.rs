@@ -605,6 +605,7 @@ impl TryFrom<api::ChainInfoQuery> for ChainInfoQuery {
             request_committees: chain_info_query.request_committees,
             request_owner_balance: try_proto_convert(chain_info_query.request_owner_balance)?,
             request_pending_message_bundles: chain_info_query.request_pending_message_bundles,
+            max_pending_message_bundles: chain_info_query.max_pending_message_bundles,
             chain_id: try_proto_convert(chain_info_query.chain_id)?,
             request_received_log_excluding_first_n: chain_info_query
                 .request_received_log_excluding_first_n,
@@ -636,6 +637,7 @@ impl TryFrom<ChainInfoQuery> for api::ChainInfoQuery {
             request_committees: chain_info_query.request_committees,
             request_owner_balance,
             request_pending_message_bundles: chain_info_query.request_pending_message_bundles,
+            max_pending_message_bundles: chain_info_query.max_pending_message_bundles,
             test_next_block_height: chain_info_query.test_next_block_height.map(Into::into),
             request_sent_certificate_hashes_by_heights: Some(
                 request_sent_certificate_hashes_by_heights,
@@ -1168,6 +1170,7 @@ pub mod tests {
             request_committees: false,
             request_owner_balance: AccountOwner::CHAIN,
             request_pending_message_bundles: false,
+            max_pending_message_bundles: Some(100),
             request_received_log_excluding_first_n: None,
             request_manager_values: false,
             request_leader_timeout: None,

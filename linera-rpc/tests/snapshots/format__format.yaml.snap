@@ -347,6 +347,8 @@ ChainInfoQuery:
         TYPENAME: AccountOwner
     - request_committees: BOOL
     - request_pending_message_bundles: BOOL
+    - max_pending_message_bundles:
+        OPTION: U64
     - request_sent_certificate_hashes_in_range:
         OPTION:
           TYPENAME: BlockHeightRange

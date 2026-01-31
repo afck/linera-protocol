@@ -77,6 +77,7 @@ use crate::{
     remote_node::RemoteNode,
     updater::{communicate_with_quorum, CommunicateAction, CommunicationError},
     worker::{Notification, Reason, WorkerError},
+    PENDING_MESSAGE_BUNDLES_REQUEST_MULTIPLIER,
 };
 
 #[derive(Debug, Clone)]
@@ -514,31 +515,53 @@ impl<Env: Environment> ChainClient<Env> {
             return Ok(Vec::new());
         }
 
-        let query = ChainInfoQuery::new(self.chain_id).with_pending_message_bundles();
-        let info = self
-            .client
-            .local_node
-            .handle_chain_info_query(query)
-            .await?
-            .info;
-        if self.preferred_owner.is_some_and(|owner| {
-            info.manager
-                .ownership
-                .is_super_owner_no_regular_owners(&owner)
-        }) {
-            // There are only super owners; they are expected to sync manually.
-            ensure!(
-                info.next_block_height >= self.initial_next_block_height,
-                Error::WalletSynchronizationError
-            );
-        }
+        let mut request_limit = self
+            .options
+            .max_pending_message_bundles
+            .saturating_mul(PENDING_MESSAGE_BUNDLES_REQUEST_MULTIPLIER);
 
-        Ok(info
-            .requested_pending_message_bundles
-            .into_iter()
-            .filter_map(|bundle| bundle.apply_policy(&self.options.message_policy))
-            .take(self.options.max_pending_message_bundles)
-            .collect())
+        loop {
+            let query = ChainInfoQuery::new(self.chain_id)
+                .with_max_pending_message_bundles(request_limit as u64);
+            let info = self
+                .client
+                .local_node
+                .handle_chain_info_query(query)
+                .await?
+                .info;
+            if self.preferred_owner.is_some_and(|owner| {
+                info.manager
+                    .ownership
+                    .is_super_owner_no_regular_owners(&owner)
+            }) {
+                // There are only super owners; they are expected to sync manually.
+                ensure!(
+                    info.next_block_height >= self.initial_next_block_height,
+                    Error::WalletSynchronizationError
+                );
+            }
+
+            let unfiltered_count = info.requested_pending_message_bundles.len();
+            let filtered: Vec<_> = info
+                .requested_pending_message_bundles
+                .into_iter()
+                .filter_map(|bundle| bundle.apply_policy(&self.options.message_policy))
+                .take(self.options.max_pending_message_bundles)
+                .collect();
+
+            // If we got results after filtering, or there were no bundles at all, we're done.
+            if !filtered.is_empty() || unfiltered_count == 0 {
+                return Ok(filtered);
+            }
+
+            // All bundles were filtered out. If we got fewer than requested, there are no more.
+            if unfiltered_count < request_limit {
+                return Ok(filtered);
+            }
+
+            // Double the limit and try again.
+            request_limit = request_limit.saturating_mul(2);
+        }
     }
 
     /// Returns an `UpdateStreams` operation that updates this client's chain about new events

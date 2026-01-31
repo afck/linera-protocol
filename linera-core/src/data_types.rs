@@ -76,6 +76,9 @@ pub struct ChainInfoQuery {
     /// Query the received messages that are waiting to be picked in the next block.
     #[debug(skip_if = Not::not)]
     pub request_pending_message_bundles: bool,
+    /// Maximum number of pending message bundles to return.
+    #[debug(skip_if = Option::is_none)]
+    pub max_pending_message_bundles: Option<u64>,
     /// Query a range of certificate hashes sent from the chain.
     //  dev: this field is left and unused to maintain backwards compatibility
     //  after hotfixing Testnet Conway.
@@ -114,6 +117,7 @@ impl ChainInfoQuery {
             request_committees: false,
             request_owner_balance: AccountOwner::CHAIN,
             request_pending_message_bundles: false,
+            max_pending_message_bundles: None,
             request_sent_certificate_hashes_in_range: None,
             request_received_log_excluding_first_n: None,
             request_manager_values: false,
@@ -141,6 +145,12 @@ impl ChainInfoQuery {
 
     pub fn with_pending_message_bundles(mut self) -> Self {
         self.request_pending_message_bundles = true;
+        self
+    }
+
+    pub fn with_max_pending_message_bundles(mut self, limit: u64) -> Self {
+        self.request_pending_message_bundles = true;
+        self.max_pending_message_bundles = Some(limit);
         self
     }
 

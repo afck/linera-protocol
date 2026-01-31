@@ -39,3 +39,7 @@ pub use environment::{
 /// The maximum number of entries in a `received_log` included in a `ChainInfo` response.
 // TODO(#4638): Revisit the number.
 pub const CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES: usize = 20_000;
+
+/// The multiplier applied to `max_pending_message_bundles` when requesting bundles,
+/// to account for filtering losses from message policy.
+pub const PENDING_MESSAGE_BUNDLES_REQUEST_MULTIPLIER: usize = 3;

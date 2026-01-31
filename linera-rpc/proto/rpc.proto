@@ -249,6 +249,9 @@ message ChainInfoQuery {
 
   // Whether to create network actions as part of the query.
   optional bool create_network_actions = 12;
+
+  // Maximum number of pending message bundles to return.
+  optional uint64 max_pending_message_bundles = 13;
 }
 
 // An authenticated proposal for a new block.

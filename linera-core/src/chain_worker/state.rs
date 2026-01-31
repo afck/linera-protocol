@@ -1699,8 +1699,16 @@ where
             } else {
                 MessageAction::Accept
             };
+            let limit = query
+                .max_pending_message_bundles
+                .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
             for (origin, inbox) in pairs {
-                for bundle in inbox.added_bundles.elements().await? {
+                // Load only up to `limit` bundles per inbox if specified.
+                let inbox_bundles = match limit {
+                    Some(n) => inbox.added_bundles.read_front(n).await?,
+                    None => inbox.added_bundles.elements().await?,
+                };
+                for bundle in inbox_bundles {
                     bundles.push(IncomingBundle {
                         origin,
                         bundle,
@@ -1709,6 +1717,9 @@ where
                 }
             }
             bundles.sort_by_key(|b| b.bundle.timestamp);
+            if let Some(n) = limit {
+                bundles.truncate(n);
+            }
             info.requested_pending_message_bundles = bundles;
         }
         let hashes = chain
