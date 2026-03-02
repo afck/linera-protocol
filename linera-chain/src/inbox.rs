@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use allocative::Allocative;
-use async_graphql::SimpleObject;
 use linera_base::{
-    data_types::{ArithmeticError, BlockHeight},
+    data_types::{ArithmeticError, BlockHeight, Cursor},
     ensure,
     identifiers::ChainId,
 };
@@ -17,7 +16,6 @@ use linera_views::{
     views::{ClonableView, View},
     ViewError,
 };
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{data_types::MessageBundle, ChainError};
@@ -82,26 +80,6 @@ where
     pub removed_bundles: QueueView<C, MessageBundle>,
 }
 
-#[derive(
-    Debug,
-    Default,
-    Clone,
-    Copy,
-    Hash,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Serialize,
-    Deserialize,
-    SimpleObject,
-    Allocative,
-)]
-pub struct Cursor {
-    height: BlockHeight,
-    index: u32,
-}
-
 #[derive(Error, Debug)]
 pub(crate) enum InboxError {
     #[error(transparent)]
@@ -128,20 +106,7 @@ pub(crate) enum InboxError {
 impl From<&MessageBundle> for Cursor {
     #[inline]
     fn from(bundle: &MessageBundle) -> Self {
-        Self {
-            height: bundle.height,
-            index: bundle.transaction_index,
-        }
-    }
-}
-
-impl Cursor {
-    fn try_add_one(self) -> Result<Self, ArithmeticError> {
-        let value = Self {
-            height: self.height,
-            index: self.index.checked_add(1).ok_or(ArithmeticError::Overflow)?,
-        };
-        Ok(value)
+        Self::new(bundle.height, bundle.transaction_index)
     }
 }
 

@@ -1109,8 +1109,8 @@ where
     /// Returns the block hashes in the given height range.
     #[instrument(skip_all, fields(
         chain_id = %self.chain_id(),
-        start = %start,
-        end = %end
+        %start,
+        %end
     ))]
     async fn get_block_hashes_in_range(
         &self,

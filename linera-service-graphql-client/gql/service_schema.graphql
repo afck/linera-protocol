@@ -501,8 +501,18 @@ A Keccak256 value
 """
 scalar CryptoHash
 
+"""
+A cursor into the messages sent from one chain to another. Identifies a position
+by block height and transaction index within that block.
+"""
 type Cursor {
+	"""
+	The block height.
+	"""
 	height: BlockHeight!
+	"""
+	The transaction index within the block.
+	"""
 	index: Int!
 }
 

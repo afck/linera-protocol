@@ -1339,8 +1339,8 @@ where
     #[instrument(skip_all, fields(
         nickname = %self.nickname,
         chain_id = %chain_id,
-        start = %start,
-        end = %end
+        %start,
+        %end
     ))]
     pub async fn get_block_hashes_in_range(
         &self,

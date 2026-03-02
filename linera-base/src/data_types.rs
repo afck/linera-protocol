@@ -131,6 +131,46 @@ impl TryFrom<U256> for Amount {
 #[cfg_attr(with_testing, derive(test_strategy::Arbitrary))]
 pub struct BlockHeight(pub u64);
 
+/// A cursor into the messages sent from one chain to another. Identifies a position
+/// by block height and transaction index within that block.
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    Hash,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    SimpleObject,
+    Allocative,
+)]
+pub struct Cursor {
+    /// The block height.
+    pub height: BlockHeight,
+    /// The transaction index within the block.
+    pub index: u32,
+}
+
+impl Cursor {
+    /// Creates a new `Cursor` with the given height and index.
+    pub fn new(height: BlockHeight, index: u32) -> Self {
+        Self { height, index }
+    }
+
+    /// Returns a cursor with the index incremented by one.
+    pub fn try_add_one(self) -> Result<Self, ArithmeticError> {
+        let value = Self {
+            height: self.height,
+            index: self.index.checked_add(1).ok_or(ArithmeticError::Overflow)?,
+        };
+        Ok(value)
+    }
+}
+
 /// An identifier for successive attempts to decide a value in a consensus protocol.
 #[derive(
     Eq,
