@@ -12,7 +12,7 @@ use allocative::Allocative;
 use async_graphql::SimpleObject;
 use linera_base::{
     crypto::{BcsHashable, CryptoHash},
-    data_types::{Blob, BlockHeight, Epoch, Event, OracleResponse, Timestamp},
+    data_types::{Blob, BlockHeight, Checkpoint, Epoch, Event, OracleResponse, Timestamp},
     hashed::Hashed,
     identifiers::{AccountOwner, BlobId, BlobType, ChainId, StreamId},
 };
@@ -557,6 +557,15 @@ impl Block {
             .iter()
             .flat_map(|messages| messages.iter().map(|message| message.destination))
             .collect()
+    }
+
+    /// Returns the checkpoint from this block's oracle responses, if one exists.
+    /// The checkpoint operation is always the first transaction in a block.
+    pub fn checkpoint(&self) -> Option<&Checkpoint> {
+        match self.body.oracle_responses.first()?.first()? {
+            OracleResponse::Checkpoint(cp) => Some(cp),
+            _ => None,
+        }
     }
 
     /// Returns whether there are any oracle responses in this block.
