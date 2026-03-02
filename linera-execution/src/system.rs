@@ -609,7 +609,30 @@ where
                 );
             }
             Checkpoint => {
-                // TODO(#460): Create checkpoint blobs and oracle response.
+                let data = txn_tracker.take_checkpoint_data().ok_or(
+                    ExecutionError::InternalError("missing checkpoint data"),
+                )?;
+                // Send SystemMessage::Checkpoint to each origin chain that has sent us
+                // messages, informing them of the latest cursor we've processed.
+                for (origin, cursor) in &data.inbox_cursors {
+                    txn_tracker.add_outgoing_message(OutgoingMessage::new(
+                        *origin,
+                        SystemMessage::Checkpoint {
+                            latest_cursor: *cursor,
+                            block_hash: data.previous_block_hash,
+                        },
+                    ));
+                }
+                // Record the checkpoint as an oracle response.
+                let checkpoint = linera_base::data_types::Checkpoint {
+                    execution_state_blobs: vec![], // TODO(#460): Serialize execution state.
+                    execution_state_hash: data.execution_state_hash,
+                    outgoing_messages_blobs: vec![], // TODO(#460): Serialize outgoing messages.
+                    next_cursors_to_remove: data.inbox_cursors,
+                };
+                txn_tracker
+                    .oracle(|| async { Ok(OracleResponse::Checkpoint(checkpoint)) })
+                    .await?;
             }
         }
 

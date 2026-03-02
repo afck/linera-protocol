@@ -18,9 +18,11 @@ use linera_base::{
     ownership::ChainOwnership,
 };
 use linera_execution::{
-    committee::Committee, system::EPOCH_STREAM_NAME, ExecutionRuntimeContext, ExecutionStateView,
-    Message, Operation, OutgoingMessage, Query, QueryContext, QueryOutcome, ResourceController,
-    ResourceTracker, ServiceRuntimeEndpoint, TransactionTracker,
+    committee::Committee,
+    system::EPOCH_STREAM_NAME,
+    CheckpointData, ExecutionRuntimeContext, ExecutionStateView, Message, Operation,
+    OutgoingMessage, Query, QueryContext, QueryOutcome, ResourceController, ResourceTracker,
+    ServiceRuntimeEndpoint, TransactionTracker,
 };
 use linera_views::{
     context::Context,
@@ -696,6 +698,7 @@ where
         published_blobs: &[Blob],
         replaying_oracle_responses: Option<Vec<Vec<OracleResponse>>>,
         exec_policy: BundleExecutionPolicy,
+        checkpoint_data: Option<CheckpointData>,
     ) -> Result<(BlockExecutionOutcome, ResourceTracker), ChainError> {
         // AutoRetry is incompatible with replaying oracle responses because discarding or
         // rejecting bundles would change which transactions execute.
@@ -742,6 +745,7 @@ where
             local_time,
             replaying_oracle_responses,
             block,
+            checkpoint_data,
         )?;
 
         // Extract max_failures from exec_policy.
@@ -928,6 +932,22 @@ where
 
     /// Executes a block with a specified policy for handling bundle failures.
     ///
+    /// Collects the data needed for creating a checkpoint.
+    async fn collect_checkpoint_data(&self) -> Result<CheckpointData, ChainError> {
+        let entries = self.inboxes.try_load_all_entries().await?;
+        let inbox_cursors = entries
+            .into_iter()
+            .map(|(origin, inbox)| (origin, *inbox.next_cursor_to_remove.get()))
+            .collect();
+        let execution_state_hash = self.execution_state_hash.get().unwrap_or_default();
+        let previous_block_hash = self.tip_state.get().block_hash.unwrap_or_default();
+        Ok(CheckpointData {
+            inbox_cursors,
+            execution_state_hash,
+            previous_block_hash,
+        })
+    }
+
     /// This method supports automatic retry with checkpointing when bundles fail:
     /// - For limit errors (block too large, fuel exceeded, etc.): the bundle is discarded
     ///   so it can be retried in a later block, unless it's the first transaction
@@ -984,6 +1004,12 @@ where
             &block,
         )?;
 
+        let checkpoint_data = if block.first_operation_is_checkpoint() {
+            Some(self.collect_checkpoint_data().await?)
+        } else {
+            None
+        };
+
         Self::execute_block_inner(
             &mut self.execution_state,
             &self.block_hashes,
@@ -993,6 +1019,7 @@ where
             published_blobs,
             replaying_oracle_responses,
             policy,
+            checkpoint_data,
         )
         .await
         .map(|(outcome, tracker)| (block, outcome, tracker))

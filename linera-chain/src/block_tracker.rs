@@ -12,9 +12,10 @@ use linera_base::{
     identifiers::{AccountOwner, BlobId, ChainId, StreamId},
 };
 use linera_execution::{
-    execution_state_actor::ExecutionStateActor, ExecutionRuntimeContext, ExecutionStateView,
-    Message, MessageContext, MessageKind, OperationContext, OutgoingMessage, ResourceController,
-    ResourceTracker, SystemExecutionStateView, TransactionOutcome, TransactionTracker,
+    execution_state_actor::ExecutionStateActor, CheckpointData, ExecutionRuntimeContext,
+    ExecutionStateView, Message, MessageContext, MessageKind, OperationContext, OutgoingMessage,
+    ResourceController, ResourceTracker, SystemExecutionStateView, TransactionOutcome,
+    TransactionTracker,
 };
 use linera_views::context::Context;
 use tracing::instrument;
@@ -58,6 +59,8 @@ pub struct BlockExecutionTracker<'resources, 'blobs> {
 
     // Blobs published in the block.
     published_blobs: BTreeMap<BlobId, &'blobs Blob>,
+    /// Data for checkpoint creation, if the block begins with `SystemOperation::Checkpoint`.
+    checkpoint_data: Option<CheckpointData>,
 }
 
 impl<'resources, 'blobs> BlockExecutionTracker<'resources, 'blobs> {
@@ -71,6 +74,7 @@ impl<'resources, 'blobs> BlockExecutionTracker<'resources, 'blobs> {
         local_time: Timestamp,
         replaying_oracle_responses: Option<Vec<Vec<OracleResponse>>>,
         proposal: &ProposedBlock,
+        checkpoint_data: Option<CheckpointData>,
     ) -> Result<Self, ChainError> {
         resource_controller
             .track_block_size(EMPTY_BLOCK_SIZE)
@@ -93,6 +97,7 @@ impl<'resources, 'blobs> BlockExecutionTracker<'resources, 'blobs> {
             operation_results: Vec::new(),
             transaction_index: 0,
             published_blobs,
+            checkpoint_data,
         })
     }
 
@@ -140,6 +145,13 @@ impl<'resources, 'blobs> BlockExecutionTracker<'resources, 'blobs> {
                     .with_execution_context(chain_execution_context)?;
                 #[cfg(with_metrics)]
                 let _operation_latency = metrics::OPERATION_EXECUTION_LATENCY.measure_latency_us();
+                if operation.is_checkpoint() {
+                    if let Some(data) = self.checkpoint_data.take() {
+                        txn_tracker.set_checkpoint_data(data);
+                    } else {
+                        return Err(ChainError::MisplacedCheckpointOperation);
+                    }
+                }
                 let context = OperationContext {
                     chain_id: self.chain_id,
                     height: self.block_height,

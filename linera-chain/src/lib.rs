@@ -145,6 +145,8 @@ pub enum ChainError {
     BcsError(#[from] bcs::Error),
     #[error("Closed chains cannot have operations, accepted messages or empty blocks")]
     ClosedChain,
+    #[error("Checkpoint operation must be the first transaction in a block")]
+    MisplacedCheckpointOperation,
     #[error("Empty blocks are not allowed")]
     EmptyBlock,
     #[error("All operations on this chain must be from one of the following applications: {0:?}")]
@@ -188,6 +190,7 @@ impl ChainError {
             | ChainError::CertificateRequiresQuorum
             | ChainError::BlockProposalTooLarge(_)
             | ChainError::ClosedChain
+            | ChainError::MisplacedCheckpointOperation
             | ChainError::EmptyBlock
             | ChainError::AuthorizedApplications(_)
             | ChainError::MissingMandatoryApplications(_)

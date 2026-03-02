@@ -14,7 +14,7 @@ use linera_base::{
     identifiers::{ApplicationId, BlobId, ChainId, StreamId},
 };
 
-use crate::{ExecutionError, OutgoingMessage};
+use crate::{CheckpointData, ExecutionError, OutgoingMessage};
 
 type AppStreamUpdates = BTreeMap<(ChainId, StreamId), (u32, u32)>;
 
@@ -56,6 +56,9 @@ pub struct TransactionTracker {
     blobs_published: BTreeSet<BlobId>,
     /// Blob IDs created or published by free apps (fees waived).
     free_blob_ids: BTreeSet<BlobId>,
+    /// Data for `SystemOperation::Checkpoint`, provided by the chain layer.
+    #[debug(skip_if = Option::is_none)]
+    checkpoint_data: Option<CheckpointData>,
 }
 
 /// The [`TransactionTracker`] contents after a transaction has finished.
@@ -136,6 +139,14 @@ impl TransactionTracker {
         let index = self.next_chain_index;
         self.next_chain_index += 1;
         index
+    }
+
+    pub fn set_checkpoint_data(&mut self, data: CheckpointData) {
+        self.checkpoint_data = Some(data);
+    }
+
+    pub fn take_checkpoint_data(&mut self) -> Option<CheckpointData> {
+        self.checkpoint_data.take()
     }
 
     pub fn add_outgoing_message(&mut self, message: OutgoingMessage) {
@@ -308,6 +319,7 @@ impl TransactionTracker {
             streams_to_process,
             blobs_published,
             free_blob_ids,
+            checkpoint_data: _,
         } = self;
         ensure!(
             streams_to_process.is_empty(),

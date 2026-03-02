@@ -34,8 +34,8 @@ use linera_base::{
     crypto::{BcsHashable, CryptoHash},
     data_types::{
         Amount, ApplicationDescription, ApplicationPermissions, ArithmeticError, Blob, BlockHeight,
-        Bytecode, DecompressionError, Epoch, NetworkDescription, SendMessageRequest, StreamUpdate,
-        Timestamp,
+        Bytecode, Cursor, DecompressionError, Epoch, NetworkDescription, SendMessageRequest,
+        StreamUpdate, Timestamp,
     },
     doc_scalar, ensure, hex_debug, http,
     identifiers::{
@@ -635,6 +635,17 @@ pub struct OperationContext {
     pub round: Option<u32>,
     /// The timestamp of the block containing the operation.
     pub timestamp: Timestamp,
+}
+
+/// Data provided by the chain layer for executing `SystemOperation::Checkpoint`.
+#[derive(Clone, Debug)]
+pub struct CheckpointData {
+    /// The `next_cursor_to_remove` for each inbox origin.
+    pub inbox_cursors: Vec<(ChainId, Cursor)>,
+    /// The execution state hash from the parent block.
+    pub execution_state_hash: CryptoHash,
+    /// Hash of the previous block on this chain.
+    pub previous_block_hash: CryptoHash,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1428,6 +1439,14 @@ impl Operation {
             Operation::System(system_operation) => Some(system_operation),
             Operation::User { .. } => None,
         }
+    }
+
+    /// Returns whether this is a `SystemOperation::Checkpoint`.
+    pub fn is_checkpoint(&self) -> bool {
+        matches!(
+            self.as_system_operation(),
+            Some(SystemOperation::Checkpoint)
+        )
     }
 
     pub fn application_id(&self) -> GenericApplicationId {

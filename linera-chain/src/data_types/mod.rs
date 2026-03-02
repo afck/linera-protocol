@@ -123,6 +123,14 @@ impl ProposedBlock {
         })
     }
 
+    /// Returns whether the first transaction is a `SystemOperation::Checkpoint`.
+    pub fn first_operation_is_checkpoint(&self) -> bool {
+        matches!(
+            self.transactions.first(),
+            Some(Transaction::ExecuteOperation(op)) if op.is_checkpoint()
+        )
+    }
+
     /// Returns all incoming bundles in this block.
     pub fn incoming_bundles(&self) -> impl Iterator<Item = &IncomingBundle> {
         self.transactions.iter().filter_map(|tx| match tx {
