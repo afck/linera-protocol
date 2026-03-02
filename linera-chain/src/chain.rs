@@ -10,8 +10,8 @@ use allocative::Allocative;
 use linera_base::{
     crypto::{CryptoHash, ValidatorPublicKey},
     data_types::{
-        ApplicationDescription, ApplicationPermissions, ArithmeticError, Blob, BlockHeight, Epoch,
-        OracleResponse, Timestamp,
+        ApplicationDescription, ApplicationPermissions, ArithmeticError, Blob, BlockHeight,
+        Checkpoint, Epoch, OracleResponse, Timestamp,
     },
     ensure,
     identifiers::{AccountOwner, ApplicationId, BlobType, ChainId, StreamId},
@@ -469,6 +469,38 @@ where
             local_time,
             maybe_committee.flat_map(|(_, committee)| committee.account_keys_and_weights()),
         )?;
+        Ok(())
+    }
+
+    /// Initializes this chain's state from a checkpoint, so that the checkpoint block
+    /// itself is the next block to be executed.
+    pub async fn initialize_from_checkpoint(
+        &mut self,
+        height: BlockHeight,
+        previous_block_hash: Option<CryptoHash>,
+        checkpoint: &Checkpoint,
+    ) -> Result<(), ChainError> {
+        // Set tip state so that the checkpoint block is the next to execute.
+        let tip = self.tip_state.get_mut();
+        tip.block_hash = previous_block_hash;
+        tip.next_block_height = height;
+
+        // Set the execution state hash from the checkpoint.
+        self.execution_state_hash
+            .set(Some(checkpoint.execution_state_hash));
+
+        // Initialize each inbox with the checkpoint's cursor as the starting point.
+        for (origin, cursor) in &checkpoint.next_cursors_to_remove {
+            let mut inbox = self.inboxes.try_load_entry_mut(origin).await?;
+            inbox.next_cursor_to_add.set(*cursor);
+            inbox.next_cursor_to_remove.set(*cursor);
+            inbox.initial_cursor.set(*cursor);
+        }
+
+        // TODO(#460): Deserialize execution state from checkpoint blobs.
+        // TODO(#460): Initialize outboxes from checkpoint blobs.
+        // TODO(#460): Initialize next_expected_events from previous_event_blocks.
+
         Ok(())
     }
 
