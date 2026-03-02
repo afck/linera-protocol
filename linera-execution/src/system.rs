@@ -143,6 +143,113 @@ pub struct EventSubscriptions {
     pub applications: BTreeSet<ApplicationId>,
 }
 
+/// A serializable snapshot of the system execution state, for checkpoint blobs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemExecutionStateSnapshot {
+    pub description: Option<ChainDescription>,
+    pub epoch: Epoch,
+    pub admin_chain_id: Option<ChainId>,
+    pub committees: BTreeMap<Epoch, Committee>,
+    pub ownership: ChainOwnership,
+    pub balance: Amount,
+    pub balances: BTreeMap<AccountOwner, Amount>,
+    pub timestamp: Timestamp,
+    pub closed: bool,
+    pub application_permissions: ApplicationPermissions,
+    pub used_blobs: BTreeSet<BlobId>,
+    pub event_subscriptions: BTreeMap<(ChainId, StreamId), EventSubscriptions>,
+    pub stream_event_counts: BTreeMap<StreamId, u32>,
+    pub finalized_sent_messages: BTreeMap<ChainId, (Cursor, CryptoHash)>,
+}
+
+impl<C> SystemExecutionStateView<C>
+where
+    C: Context + Clone + 'static,
+{
+    /// Creates a serializable snapshot of the current system execution state.
+    pub async fn to_snapshot(&self) -> Result<SystemExecutionStateSnapshot, linera_views::ViewError> {
+        Ok(SystemExecutionStateSnapshot {
+            description: self.description.get().clone(),
+            epoch: *self.epoch.get(),
+            admin_chain_id: *self.admin_chain_id.get(),
+            committees: self.committees.get().clone(),
+            ownership: self.ownership.get().clone(),
+            balance: *self.balance.get(),
+            balances: self.balances.index_values().await?.into_iter().collect(),
+            timestamp: *self.timestamp.get(),
+            closed: *self.closed.get(),
+            application_permissions: self.application_permissions.get().clone(),
+            used_blobs: self.used_blobs.indices().await?.into_iter().collect(),
+            event_subscriptions: self
+                .event_subscriptions
+                .index_values()
+                .await?
+                .into_iter()
+                .collect(),
+            stream_event_counts: self
+                .stream_event_counts
+                .index_values()
+                .await?
+                .into_iter()
+                .collect(),
+            finalized_sent_messages: self
+                .finalized_sent_messages
+                .index_values()
+                .await?
+                .into_iter()
+                .collect(),
+        })
+    }
+
+    /// Populates this view from a snapshot.
+    pub async fn load_snapshot(
+        &mut self,
+        snapshot: SystemExecutionStateSnapshot,
+    ) -> Result<(), linera_views::ViewError> {
+        let SystemExecutionStateSnapshot {
+            description,
+            epoch,
+            admin_chain_id,
+            committees,
+            ownership,
+            balance,
+            balances,
+            timestamp,
+            closed,
+            application_permissions,
+            used_blobs,
+            event_subscriptions,
+            stream_event_counts,
+            finalized_sent_messages,
+        } = snapshot;
+        self.description.set(description);
+        self.epoch.set(epoch);
+        self.admin_chain_id.set(admin_chain_id);
+        self.committees.set(committees);
+        self.ownership.set(ownership);
+        self.balance.set(balance);
+        for (owner, amount) in balances {
+            self.balances.insert(&owner, amount)?;
+        }
+        self.timestamp.set(timestamp);
+        self.closed.set(closed);
+        self.application_permissions.set(application_permissions);
+        for blob_id in used_blobs {
+            self.used_blobs.insert(&blob_id)?;
+        }
+        for (key, subscriptions) in event_subscriptions {
+            self.event_subscriptions.insert(&key, subscriptions)?;
+        }
+        for (stream_id, count) in stream_event_counts {
+            self.stream_event_counts.insert(&stream_id, count)?;
+        }
+        for (chain_id, entry) in finalized_sent_messages {
+            self.finalized_sent_messages.insert(&chain_id, entry)?;
+        }
+        Ok(())
+    }
+}
+
 /// The initial configuration for a new chain.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Allocative)]
 pub struct OpenChainConfig {
