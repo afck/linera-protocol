@@ -14,7 +14,8 @@ use linera_base::{
     crypto::CryptoHash,
     data_types::{
         Amount, ApplicationPermissions, ArithmeticError, Blob, BlobContent, BlockHeight,
-        ChainDescription, ChainOrigin, Epoch, InitialChainConfig, OracleResponse, Timestamp,
+        ChainDescription, ChainOrigin, Cursor, Epoch, InitialChainConfig, OracleResponse,
+        Timestamp,
     },
     ensure, hex_debug,
     identifiers::{Account, AccountOwner, BlobId, BlobType, ChainId, EventId, ModuleId, StreamId},
@@ -101,6 +102,9 @@ pub struct SystemExecutionStateView<C> {
     pub event_subscriptions: MapView<C, (ChainId, StreamId), EventSubscriptions>,
     /// The number of events in the streams that this chain is writing to.
     pub stream_event_counts: MapView<C, StreamId, u32>,
+    /// For each recipient chain, the latest cursor and block hash of a message sent from
+    /// this chain that is known to have been included (accepted or rejected) on the recipient.
+    pub finalized_sent_messages: MapView<C, ChainId, (Cursor, CryptoHash)>,
 }
 
 impl<C: Context, C2: Context> ReplaceContext<C2> for SystemExecutionStateView<C> {
@@ -124,6 +128,7 @@ impl<C: Context, C2: Context> ReplaceContext<C2> for SystemExecutionStateView<C>
             used_blobs: self.used_blobs.with_context(ctx.clone()).await,
             event_subscriptions: self.event_subscriptions.with_context(ctx.clone()).await,
             stream_event_counts: self.stream_event_counts.with_context(ctx.clone()).await,
+            finalized_sent_messages: self.finalized_sent_messages.with_context(ctx.clone()).await,
         }
     }
 }
@@ -241,6 +246,8 @@ pub enum SystemOperation {
     ProcessRemovedEpoch(Epoch),
     /// Updates the event stream trackers.
     UpdateStreams(Vec<(ChainId, StreamId, u32)>),
+    /// Creates a checkpoint of the current chain state.
+    Checkpoint,
 }
 
 /// Operations that are only allowed on the admin chain.
@@ -275,6 +282,12 @@ pub enum SystemMessage {
         owner: AccountOwner,
         amount: Amount,
         recipient: Account,
+    },
+    /// Notifies a sender chain about the latest included message cursor and the
+    /// receiving block hash.
+    Checkpoint {
+        latest_cursor: Cursor,
+        block_hash: CryptoHash,
     },
 }
 
@@ -595,6 +608,9 @@ where
                     ExecutionError::EventsNotFound(missing_events)
                 );
             }
+            Checkpoint => {
+                // TODO(#460): Create checkpoint blobs and oracle response.
+            }
         }
 
         Ok(new_application)
@@ -771,6 +787,13 @@ where
                 {
                     outcome.push(message);
                 }
+            }
+            Checkpoint {
+                latest_cursor,
+                block_hash,
+            } => {
+                self.finalized_sent_messages
+                    .insert(&context.origin, (latest_cursor, block_hash))?;
             }
         }
         Ok(outcome)

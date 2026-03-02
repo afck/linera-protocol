@@ -282,6 +282,7 @@ impl PostgresDatabase {
                     SystemOperation::UpdateStreams(_) => "UpdateStreams",
                     SystemOperation::ChangeOwnership { .. } => "ChangeOwnership",
                     SystemOperation::VerifyBlob { .. } => "VerifyBlob",
+                    SystemOperation::Checkpoint => "Checkpoint",
                 };
                 ("System", None, Some(sys_op_type))
             }
@@ -440,6 +441,15 @@ impl PostgresDatabase {
                         ))
                     })?;
                     ("EventExists", None, Some(serialized))
+                }
+                OracleResponse::Checkpoint(checkpoint) => {
+                    let serialized = bincode::serialize(checkpoint).map_err(|e| {
+                        PostgresError::Serialization(format!(
+                            "Failed to serialize checkpoint: {}",
+                            e
+                        ))
+                    })?;
+                    ("Checkpoint", None, Some(serialized))
                 }
             };
 

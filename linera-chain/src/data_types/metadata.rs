@@ -390,6 +390,7 @@ impl From<&SystemOperation> for SystemOperationMetadata {
                 ),
                 ..SystemOperationMetadata::new("UpdateStreams")
             },
+            SystemOperation::Checkpoint => SystemOperationMetadata::new("Checkpoint"),
         }
     }
 }
@@ -466,6 +467,11 @@ impl From<&SystemMessage> for SystemMessageMetadata {
                     amount: *amount,
                     recipient: *recipient,
                 }),
+            },
+            SystemMessage::Checkpoint { .. } => SystemMessageMetadata {
+                system_message_type: "Checkpoint".to_string(),
+                credit: None,
+                withdraw: None,
             },
         }
     }

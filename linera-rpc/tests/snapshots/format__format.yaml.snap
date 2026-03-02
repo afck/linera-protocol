@@ -440,6 +440,21 @@ ChainOwnership:
     - open_multi_leader_rounds: BOOL
     - timeout_config:
         TYPENAME: TimeoutConfig
+Checkpoint:
+  STRUCT:
+    - execution_state_blobs:
+        SEQ:
+          TYPENAME: CryptoHash
+    - execution_state_hash:
+        TYPENAME: CryptoHash
+    - outgoing_messages_blobs:
+        SEQ:
+          TYPENAME: CryptoHash
+    - next_cursors_to_remove:
+        SEQ:
+          TUPLE:
+            - TYPENAME: ChainId
+            - TYPENAME: Cursor
 Committee:
   STRUCT:
     - validators:
@@ -494,6 +509,11 @@ CryptoHash:
     TUPLEARRAY:
       CONTENT: U8
       SIZE: 32
+Cursor:
+  STRUCT:
+    - height:
+        TYPENAME: BlockHeight
+    - index: U32
 Ed25519PublicKey:
   NEWTYPESTRUCT:
     TUPLEARRAY:
@@ -867,6 +887,10 @@ OracleResponse:
       EventExists:
         NEWTYPE:
           TYPENAME: EventId
+    7:
+      Checkpoint:
+        NEWTYPE:
+          TYPENAME: Checkpoint
 OriginalProposal:
   ENUM:
     0:
@@ -1204,6 +1228,13 @@ SystemMessage:
               TYPENAME: Amount
           - recipient:
               TYPENAME: Account
+    2:
+      Checkpoint:
+        STRUCT:
+          - latest_cursor:
+              TYPENAME: Cursor
+          - block_hash:
+              TYPENAME: CryptoHash
 SystemOperation:
   ENUM:
     0:
@@ -1299,6 +1330,8 @@ SystemOperation:
               - TYPENAME: ChainId
               - TYPENAME: StreamId
               - U32
+    14:
+      Checkpoint: UNIT
 TimeDelta:
   NEWTYPESTRUCT: U64
 Timeout:

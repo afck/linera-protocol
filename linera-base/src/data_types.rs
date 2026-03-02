@@ -1126,9 +1126,25 @@ pub enum OracleResponse {
     ),
     /// An event exists.
     EventExists(EventId),
+    /// A checkpoint was created.
+    Checkpoint(Checkpoint),
 }
 
 impl BcsHashable<'_> for OracleResponse {}
+
+/// A snapshot of a chain's state at a particular block, containing all data needed to
+/// start executing the chain from that point without replaying from genesis.
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Allocative)]
+pub struct Checkpoint {
+    /// Hash of the blobs containing the execution state after the parent.
+    pub execution_state_blobs: Vec<CryptoHash>,
+    /// The parent block's execution state hash.
+    pub execution_state_hash: CryptoHash,
+    /// Hash of the blobs containing the outgoing messages.
+    pub outgoing_messages_blobs: Vec<CryptoHash>,
+    /// The `next_cursor_to_remove` inbox values before the checkpoint.
+    pub next_cursors_to_remove: Vec<(ChainId, Cursor)>,
+}
 
 /// Description of a user application.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Hash, Serialize, WitType, WitLoad, WitStore)]
