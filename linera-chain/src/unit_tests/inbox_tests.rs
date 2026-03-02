@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use assert_matches::assert_matches;
-use linera_base::{crypto::CryptoHash, data_types::Timestamp, identifiers::ApplicationId};
+use linera_base::{
+    crypto::CryptoHash,
+    data_types::{BlockHeight, Cursor, Timestamp},
+    identifiers::ApplicationId,
+};
 use linera_execution::{Message, MessageKind};
 
 use super::*;
@@ -332,6 +336,45 @@ async fn test_inbox_add_then_remove_mixed() {
         .unwrap());
     assert!(view
         .remove_bundle(&make_bundle(hash, 1, 0, [2]))
+        .await
+        .unwrap());
+    // Inbox is empty again.
+    assert_eq!(view.added_bundles.count(), 0);
+    assert_eq!(view.removed_bundles.count(), 0);
+}
+
+#[tokio::test]
+async fn test_inbox_initial_cursor() {
+    let hash = CryptoHash::test_hash("1");
+    let mut view = InboxStateView::new().await;
+    // Set initial_cursor to (height=1, index=0), simulating a checkpoint.
+    // Leave next_cursor_to_add at the default (0, 0) to simulate a fresh inbox
+    // that receives cross-chain updates including bundles from before the checkpoint.
+    view.initial_cursor
+        .set(Cursor::new(BlockHeight::from(1), 0));
+    // Bundles before the initial cursor are silently skipped (not added to the queue).
+    assert!(!view.add_bundle(make_bundle(hash, 0, 0, [0])).await.unwrap());
+    assert!(!view.add_bundle(make_bundle(hash, 0, 1, [1])).await.unwrap());
+    assert_eq!(view.added_bundles.count(), 0);
+    assert_eq!(view.removed_bundles.count(), 0);
+    // The next_cursor_to_add still advances past the skipped bundles.
+    assert_eq!(
+        *view.next_cursor_to_add.get(),
+        Cursor::new(BlockHeight::from(0), 2)
+    );
+    // A bundle at the initial cursor is added normally.
+    assert!(view.add_bundle(make_bundle(hash, 1, 0, [2])).await.unwrap());
+    assert_eq!(view.added_bundles.count(), 1);
+    // A bundle after the initial cursor is also added normally.
+    assert!(view.add_bundle(make_bundle(hash, 1, 1, [3])).await.unwrap());
+    assert_eq!(view.added_bundles.count(), 2);
+    // Remove both bundles.
+    assert!(view
+        .remove_bundle(&make_bundle(hash, 1, 0, [2]))
+        .await
+        .unwrap());
+    assert!(view
+        .remove_bundle(&make_bundle(hash, 1, 1, [3]))
         .await
         .unwrap());
     // Inbox is empty again.

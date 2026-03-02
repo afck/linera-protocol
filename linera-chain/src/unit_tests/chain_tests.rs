@@ -14,7 +14,7 @@ use linera_base::{
     crypto::{AccountPublicKey, CryptoHash, ValidatorPublicKey},
     data_types::{
         Amount, ApplicationDescription, ApplicationPermissions, Blob, BlockHeight, Bytecode,
-        ChainDescription, ChainOrigin, Epoch, InitialChainConfig, Timestamp,
+        ChainDescription, ChainOrigin, Checkpoint, Cursor, Epoch, InitialChainConfig, Timestamp,
     },
     http,
     identifiers::{Account, AccountOwner, ApplicationId, ChainId, ModuleId},
@@ -881,4 +881,59 @@ async fn prepare_test_with_dummy_mock_application(
     });
 
     Ok((application, application_id, chain, block, time))
+}
+
+// TODO(#460): Extend this into a round-trip test: execute blocks with incoming messages,
+// create a checkpoint, initialize a new chain from it, and compare the two states.
+#[tokio::test]
+async fn test_initialize_from_checkpoint() -> anyhow::Result<()> {
+    let chain_id = ChainId(CryptoHash::test_hash("test_chain"));
+    let origin_a = ChainId(CryptoHash::test_hash("origin_a"));
+    let origin_b = ChainId(CryptoHash::test_hash("origin_b"));
+
+    let mut chain = ChainStateView::new(chain_id).await;
+
+    let previous_block_hash = CryptoHash::test_hash("previous_block");
+    let execution_state_hash = CryptoHash::test_hash("execution_state");
+    let height = BlockHeight::from(42);
+
+    let checkpoint = Checkpoint {
+        execution_state_blobs: vec![],
+        execution_state_hash,
+        outgoing_messages_blobs: vec![],
+        next_cursors_to_remove: vec![
+            (origin_a, Cursor::new(BlockHeight::from(10), 3)),
+            (origin_b, Cursor::new(BlockHeight::from(20), 0)),
+        ],
+    };
+
+    chain
+        .initialize_from_checkpoint(height, Some(previous_block_hash), &checkpoint)
+        .await?;
+
+    // Verify tip state.
+    assert_eq!(chain.tip_state.get().next_block_height, height);
+    assert_eq!(chain.tip_state.get().block_hash, Some(previous_block_hash));
+
+    // Verify execution state hash.
+    assert_eq!(
+        *chain.execution_state_hash.get(),
+        Some(execution_state_hash)
+    );
+
+    // Verify inbox for origin_a: all cursors set to the checkpoint value.
+    let inbox_a = chain.inboxes.try_load_entry(&origin_a).await?.unwrap();
+    let cursor_a = Cursor::new(BlockHeight::from(10), 3);
+    assert_eq!(*inbox_a.next_cursor_to_add.get(), cursor_a);
+    assert_eq!(*inbox_a.next_cursor_to_remove.get(), cursor_a);
+    assert_eq!(*inbox_a.initial_cursor.get(), cursor_a);
+
+    // Verify inbox for origin_b.
+    let inbox_b = chain.inboxes.try_load_entry(&origin_b).await?.unwrap();
+    let cursor_b = Cursor::new(BlockHeight::from(20), 0);
+    assert_eq!(*inbox_b.next_cursor_to_add.get(), cursor_b);
+    assert_eq!(*inbox_b.next_cursor_to_remove.get(), cursor_b);
+    assert_eq!(*inbox_b.initial_cursor.get(), cursor_b);
+
+    Ok(())
 }
