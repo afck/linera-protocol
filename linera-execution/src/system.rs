@@ -770,11 +770,18 @@ where
                     execution_state_blob_hashes.push(blob.id().hash);
                     txn_tracker.add_created_blob(blob);
                 }
+                // Register the pre-computed outgoing messages blob(s).
+                let mut outgoing_messages_blob_hashes = Vec::new();
+                for blob_bytes in data.outgoing_messages_blobs {
+                    let blob = Blob::new_data(blob_bytes);
+                    outgoing_messages_blob_hashes.push(blob.id().hash);
+                    txn_tracker.add_created_blob(blob);
+                }
                 // Record the checkpoint as an oracle response.
                 let checkpoint = linera_base::data_types::Checkpoint {
                     execution_state_blobs: execution_state_blob_hashes,
                     execution_state_hash: data.execution_state_hash,
-                    outgoing_messages_blobs: vec![], // TODO(#460): Serialize outgoing messages.
+                    outgoing_messages_blobs: outgoing_messages_blob_hashes,
                     next_cursors_to_remove: data.inbox_cursors,
                 };
                 txn_tracker

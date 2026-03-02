@@ -646,6 +646,9 @@ pub struct CheckpointData {
     pub execution_state_hash: CryptoHash,
     /// Hash of the previous block on this chain.
     pub previous_block_hash: CryptoHash,
+    /// Pre-serialized outgoing messages blob(s), each at most `maximum_blob_size` bytes.
+    /// Contains the BCS-serialized pending message bundles per recipient.
+    pub outgoing_messages_blobs: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug)]

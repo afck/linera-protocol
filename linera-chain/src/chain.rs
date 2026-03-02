@@ -479,13 +479,18 @@ where
     /// The `execution_state_blobs` must be the raw bytes of each blob listed in
     /// `checkpoint.execution_state_blobs`, in the same order. They are concatenated and
     /// deserialized into the system execution state.
+    ///
+    /// The `outgoing_messages_blobs` contain the serialized pending message bundles per
+    /// recipient. Returns the deserialized outgoing messages so the caller can create
+    /// cross-chain requests.
     pub async fn initialize_from_checkpoint(
         &mut self,
         height: BlockHeight,
         previous_block_hash: Option<CryptoHash>,
         checkpoint: &Checkpoint,
         execution_state_blobs: &[&[u8]],
-    ) -> Result<(), ChainError> {
+        outgoing_messages_blobs: &[&[u8]],
+    ) -> Result<BTreeMap<ChainId, Vec<(Epoch, MessageBundle)>>, ChainError> {
         // Set tip state so that the checkpoint block is the next to execute.
         let tip = self.tip_state.get_mut();
         tip.block_hash = previous_block_hash;
@@ -496,7 +501,7 @@ where
             .set(Some(checkpoint.execution_state_hash));
 
         // Deserialize execution state from the checkpoint blobs.
-        let snapshot_bytes: Vec<u8> = execution_state_blobs.iter().copied().flatten().copied().collect();
+        let snapshot_bytes: Vec<u8> = execution_state_blobs.concat();
         let snapshot: SystemExecutionStateSnapshot = bcs::from_bytes(&snapshot_bytes)?;
 
         // Initialize next_expected_events from the snapshot's stream_event_counts,
@@ -515,9 +520,28 @@ where
             inbox.initial_cursor.set(*cursor);
         }
 
-        // TODO(#460): Initialize outboxes from checkpoint blobs.
+        // Deserialize outgoing messages from the checkpoint blobs.
+        let outgoing_messages_bytes: Vec<u8> = outgoing_messages_blobs.concat();
+        let bundles_by_recipient: BTreeMap<ChainId, Vec<(Epoch, MessageBundle)>> =
+            if outgoing_messages_bytes.is_empty() {
+                BTreeMap::new()
+            } else {
+                bcs::from_bytes(&outgoing_messages_bytes)?
+            };
 
-        Ok(())
+        // Initialize outboxes from the deserialized message bundles.
+        let mut nonempty_outboxes: BTreeSet<ChainId> =
+            self.nonempty_outboxes.get().iter().copied().collect();
+        for (recipient, bundles) in &bundles_by_recipient {
+            let mut outbox = self.outboxes.try_load_entry_mut(recipient).await?;
+            for (_, bundle) in bundles {
+                outbox.schedule_message(bundle.height)?;
+            }
+            nonempty_outboxes.insert(*recipient);
+        }
+        self.nonempty_outboxes.set(nonempty_outboxes);
+
+        Ok(bundles_by_recipient)
     }
 
     pub async fn next_block_height_to_receive(
@@ -1003,6 +1027,7 @@ where
             inbox_cursors,
             execution_state_hash,
             previous_block_hash,
+            outgoing_messages_blobs: Vec::new(),
         })
     }
 
@@ -1014,6 +1039,7 @@ where
     /// - After `max_failures` failed bundles, all remaining message bundles are discarded.
     ///
     /// The block may be modified to reflect the actual executed transactions.
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip_all, fields(
         chain_id = %self.chain_id(),
         block_height = %block.height
@@ -1026,6 +1052,7 @@ where
         published_blobs: &[Blob],
         replaying_oracle_responses: Option<Vec<Vec<OracleResponse>>>,
         policy: BundleExecutionPolicy,
+        outgoing_messages_blobs: Vec<Vec<u8>>,
     ) -> Result<(ProposedBlock, BlockExecutionOutcome, ResourceTracker), ChainError> {
         assert_eq!(
             block.chain_id,
@@ -1063,7 +1090,9 @@ where
         )?;
 
         let checkpoint_data = if block.first_operation_is_checkpoint() {
-            Some(self.collect_checkpoint_data().await?)
+            let mut data = self.collect_checkpoint_data().await?;
+            data.outgoing_messages_blobs = outgoing_messages_blobs;
+            Some(data)
         } else {
             None
         };

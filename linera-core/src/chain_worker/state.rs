@@ -859,6 +859,7 @@ where
 
         // If this block has a checkpoint and the chain is behind, initialize from the
         // checkpoint to jump ahead to the block's height instead of leaving a gap.
+        let mut checkpoint_requests = Vec::new();
         if tip.next_block_height < height {
             if let Some(checkpoint) = block.checkpoint() {
                 let execution_state_blob_bytes: Vec<Vec<u8>> = checkpoint
@@ -872,18 +873,44 @@ where
                             .ok_or_else(|| WorkerError::BlobsNotFound(vec![blob_id]))
                     })
                     .collect::<Result<_, _>>()?;
-                let blob_slices: Vec<&[u8]> = execution_state_blob_bytes
+                let outgoing_messages_blob_bytes: Vec<Vec<u8>> = checkpoint
+                    .outgoing_messages_blobs
+                    .iter()
+                    .map(|hash| {
+                        let blob_id = BlobId::new(*hash, BlobType::Data);
+                        blobs
+                            .get(&blob_id)
+                            .map(|blob| blob.bytes().to_vec())
+                            .ok_or_else(|| WorkerError::BlobsNotFound(vec![blob_id]))
+                    })
+                    .collect::<Result<_, _>>()?;
+                let exec_slices: Vec<&[u8]> = execution_state_blob_bytes
                     .iter()
                     .map(|b| b.as_slice())
                     .collect();
-                self.chain
+                let msg_slices: Vec<&[u8]> = outgoing_messages_blob_bytes
+                    .iter()
+                    .map(|b| b.as_slice())
+                    .collect();
+                let bundles_by_recipient = self
+                    .chain
                     .initialize_from_checkpoint(
                         height,
                         block.header.previous_block_hash,
                         checkpoint,
-                        &blob_slices,
+                        &exec_slices,
+                        &msg_slices,
                     )
                     .await?;
+                // Create cross-chain requests from the checkpoint's outgoing messages.
+                let sender = self.chain_id();
+                for (recipient, bundles) in bundles_by_recipient {
+                    checkpoint_requests.push(CrossChainRequest::UpdateRecipient {
+                        sender,
+                        recipient,
+                        bundles,
+                    });
+                }
                 self.save().await?;
                 self.knows_chain_is_active = true;
             }
@@ -900,6 +927,7 @@ where
             // Persist chain.
             self.save().await?;
             let mut actions = self.create_network_actions(None).await?;
+            actions.cross_chain_requests.extend(checkpoint_requests);
             if !updated_event_streams.is_empty() {
                 actions.notifications.push(Notification {
                     chain_id,
@@ -978,6 +1006,7 @@ where
                         &published_blobs,
                         oracle_responses,
                         BundleExecutionPolicy::Abort,
+                        Vec::new(),
                     )
                     .await?;
                 verified
@@ -996,6 +1025,7 @@ where
             .apply_confirmed_block(certificate.value(), local_time)
             .await?;
         let mut actions = self.create_network_actions(None).await?;
+        actions.cross_chain_requests.extend(checkpoint_requests);
         trace!("Processed confirmed block {height} on chain {chain_id:.8}");
         let hash = certificate.hash();
         actions.notifications.push(Notification {
@@ -1778,6 +1808,100 @@ where
         Ok(ChainInfoResponse::new(info, self.config.key_pair()))
     }
 
+    /// Computes the outgoing messages blob(s) for a checkpoint block.
+    ///
+    /// If the block has a checkpoint operation, this collects all pending message bundles
+    /// from the outboxes, serializes them per recipient, and splits into blob-sized chunks.
+    /// Returns empty if the block doesn't contain a checkpoint.
+    async fn compute_outgoing_messages_blobs(
+        &self,
+        block: &ProposedBlock,
+    ) -> Result<Vec<Vec<u8>>, WorkerError> {
+        if !block.first_operation_is_checkpoint() {
+            return Ok(Vec::new());
+        }
+
+        let (_, committee) = self.chain.current_committee()?;
+        let max_blob_size = committee.policy().maximum_blob_size as usize;
+
+        // Collect all outbox entries: per-recipient block heights with pending messages.
+        let targets = self.chain.nonempty_outbox_chain_ids();
+        let outboxes = self.chain.load_outboxes(&targets).await?;
+        let mut heights_by_recipient = BTreeMap::<ChainId, Vec<BlockHeight>>::new();
+        for (target, outbox) in targets.iter().zip(&outboxes) {
+            let heights = outbox.queue.elements().await?;
+            if !heights.is_empty() {
+                heights_by_recipient.insert(*target, heights);
+            }
+        }
+
+        if heights_by_recipient.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Load blocks at the pending heights and extract message bundles per recipient.
+        let all_heights: Vec<_> = heights_by_recipient.values().flatten().copied().collect();
+        let mut hashes = Vec::new();
+        for (height, hash) in self.chain.block_hashes.multi_get_pairs(all_heights).await? {
+            let hash = hash.ok_or_else(|| WorkerError::BlockHashNotFound {
+                height,
+                chain_id: self.chain_id(),
+            })?;
+            hashes.push(hash);
+        }
+
+        let mut uncached_hashes = Vec::new();
+        let mut height_to_blocks: HashMap<BlockHeight, Hashed<Block>> = HashMap::new();
+
+        for hash in hashes {
+            if let Some(hashed_block) = self.block_values.get(&hash) {
+                height_to_blocks.insert(hashed_block.inner().header.height, hashed_block);
+            } else {
+                uncached_hashes.push(hash);
+            }
+        }
+
+        if !uncached_hashes.is_empty() {
+            let certificates = self.storage.read_certificates(&uncached_hashes).await?;
+            let certificates = match ResultReadCertificates::new(certificates, uncached_hashes) {
+                ResultReadCertificates::Certificates(certificates) => certificates,
+                ResultReadCertificates::InvalidHashes(hashes) => {
+                    return Err(WorkerError::ReadCertificatesError(hashes))
+                }
+            };
+            for cert in certificates {
+                let hashed_block = cert.into_value().into_inner();
+                let height = hashed_block.inner().header.height;
+                self.block_values.insert(Cow::Owned(hashed_block.clone()));
+                height_to_blocks.insert(height, hashed_block);
+            }
+        }
+
+        let mut bundles_by_recipient: BTreeMap<ChainId, Vec<(Epoch, MessageBundle)>> =
+            BTreeMap::new();
+        for (recipient, heights) in heights_by_recipient {
+            let mut bundles = Vec::new();
+            for height in heights {
+                let hashed_block = height_to_blocks
+                    .get(&height)
+                    .ok_or_else(|| ChainError::InternalError("missing block".to_string()))?;
+                bundles.extend(
+                    hashed_block
+                        .inner()
+                        .message_bundles_for(recipient, hashed_block.hash()),
+                );
+            }
+            bundles_by_recipient.insert(recipient, bundles);
+        }
+
+        let serialized = linera_base::bcs::to_bytes(&bundles_by_recipient)?;
+        let mut blobs = Vec::new();
+        for chunk in serialized.chunks(max_blob_size) {
+            blobs.push(chunk.to_vec());
+        }
+        Ok(blobs)
+    }
+
     /// Executes a block with a specified policy for handling bundle failures.
     ///
     /// The block may be modified to reflect the actual executed transactions.
@@ -1793,6 +1917,9 @@ where
         published_blobs: &[Blob],
         policy: BundleExecutionPolicy,
     ) -> Result<(Block, ResourceTracker), WorkerError> {
+        let outgoing_messages_blobs = self
+            .compute_outgoing_messages_blobs(&block)
+            .await?;
         let (proposed_block, outcome, resource_tracker) = Box::pin(self.chain.execute_block(
             block,
             local_time,
@@ -1800,6 +1927,7 @@ where
             published_blobs,
             None,
             policy,
+            outgoing_messages_blobs,
         ))
         .await?;
         let executed_block = Block::new(proposed_block, outcome);

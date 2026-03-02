@@ -72,6 +72,7 @@ impl ChainStateView<MemoryContext<TestExecutionRuntimeContext>> {
             published_blobs,
             None,
             BundleExecutionPolicy::Abort,
+            Vec::new(),
         )
         .await
     }
@@ -917,6 +918,7 @@ async fn test_initialize_from_checkpoint() -> anyhow::Result<()> {
             Some(previous_block_hash),
             &checkpoint,
             &[&snapshot_bytes],
+            &[],
         )
         .await?;
 
