@@ -1908,7 +1908,7 @@ where
             }] if amount == Amount::from_tokens(995)),
         "Unexpected bundle",
     );
-    assert_eq!(chain.confirmed_log.count(), 1);
+    assert_eq!(chain.block_hashes.count().await?, 1);
     assert_eq!(Some(certificate.hash()), chain.tip_state.get().block_hash);
     let chain = env.worker().chain_state_view(chain_2).await?;
     assert!(chain.is_active());
@@ -1960,7 +1960,7 @@ where
         BlockHeight::from(1),
         new_sender_chain.tip_state.get().next_block_height
     );
-    assert_eq!(new_sender_chain.confirmed_log.count(), 1);
+    assert_eq!(new_sender_chain.block_hashes.count().await?, 1);
     assert_eq!(
         Some(certificate.hash()),
         new_sender_chain.tip_state.get().block_hash
@@ -2016,7 +2016,7 @@ where
         BlockHeight::from(1),
         chain.tip_state.get().next_block_height
     );
-    assert_eq!(chain.confirmed_log.count(), 1);
+    assert_eq!(chain.block_hashes.count().await?, 1);
     assert_eq!(Some(certificate.hash()), chain.tip_state.get().block_hash);
     Ok(())
 }
@@ -2096,7 +2096,7 @@ where
         BlockHeight::from(1),
         chain_1_state.tip_state.get().next_block_height
     );
-    assert_eq!(chain_1_state.confirmed_log.count(), 1);
+    assert_eq!(chain_1_state.block_hashes.count().await?, 1);
     assert_eq!(
         Some(certificate.hash()),
         chain_1_state.tip_state.get().block_hash
@@ -2172,7 +2172,7 @@ where
         }] if amount == Amount::from_tokens(10)),
         "Unexpected bundle",
     );
-    assert_eq!(chain.confirmed_log.count(), 0);
+    assert_eq!(chain.block_hashes.count().await?, 0);
     assert_eq!(None, chain.tip_state.get().block_hash);
     assert_eq!(chain.received_log.count(), 1);
     Ok(())
@@ -2408,7 +2408,7 @@ where
                 && ownership.super_owners.is_empty()
                 && ownership.owners.len() == 1
         );
-        assert_eq!(recipient_chain.confirmed_log.count(), 1);
+        assert_eq!(recipient_chain.block_hashes.count().await?, 1);
         assert_eq!(
             recipient_chain.tip_state.get().block_hash,
             Some(certificate.hash())

@@ -153,9 +153,6 @@ query Chain(
       fallbackOwners
       currentRound
     }
-    confirmedLog {
-      entries
-    }
     receivedLog {
       entries {
         chainId

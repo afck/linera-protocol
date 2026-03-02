@@ -349,11 +349,6 @@ type ChainStateExtendedView {
 	"""
 	pendingProposedBlobs: ReentrantCollectionView_AccountOwner_PendingBlobsView_d58d342d!
 	"""
-	Hashes of all certified blocks for this sender.
-	This ends with `block_hash` and has length `usize::from(next_block_height)`.
-	"""
-	confirmedLog: LogView_CryptoHash_87fbb60c!
-	"""
 	Sender chain and height of all certified blocks known as a receiver (local ordering).
 	"""
 	receivedLog: LogView_ChainAndHeight_7af83576!
@@ -384,9 +379,9 @@ type ChainStateExtendedView {
 	"""
 	nonemptyOutboxes: [ChainId!]!
 	"""
-	Blocks that have been verified but not executed yet, and that may not be contiguous.
+	Block hashes indexed by height. Contains both executed and preprocessed blocks.
 	"""
-	preprocessedBlocks: MapView_BlockHeight_CryptoHash_1bae6d76!
+	blockHashes: MapView_BlockHeight_CryptoHash_1bae6d76!
 }
 
 """
@@ -681,11 +676,6 @@ scalar JSONObject
 type LogView_ChainAndHeight_7af83576 {
 	count: Int!
 	entries(start: Int, end: Int): [ChainAndHeight!]!
-}
-
-type LogView_CryptoHash_87fbb60c {
-	count: Int!
-	entries(start: Int, end: Int): [CryptoHash!]!
 }
 
 input MapFilters_AccountOwner_d6668c53 {

@@ -331,7 +331,7 @@ where
         Ok(())
     }
 
-    pub async fn get_preprocessed_block_hashes(
+    pub async fn get_block_hashes_in_range(
         &self,
         chain_id: ChainId,
         start: BlockHeight,
@@ -340,7 +340,7 @@ where
         Ok(self
             .node
             .state
-            .get_preprocessed_block_hashes(chain_id, start, end)
+            .get_block_hashes_in_range(chain_id, start, end)
             .await?)
     }
 

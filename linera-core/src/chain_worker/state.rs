@@ -243,12 +243,12 @@ where
                         .await,
                 )
                 .is_ok(),
-            ChainWorkerRequest::GetPreprocessedBlockHashes {
+            ChainWorkerRequest::GetBlockHashesInRange {
                 start,
                 end,
                 callback,
             } => callback
-                .send(self.get_preprocessed_block_hashes(start, end).await)
+                .send(self.get_block_hashes_in_range(start, end).await)
                 .is_ok(),
             ChainWorkerRequest::GetInboxNextHeight { origin, callback } => callback
                 .send(self.get_inbox_next_height(origin).await)
@@ -508,38 +508,10 @@ where
         heights_by_recipient: BTreeMap<ChainId, Vec<BlockHeight>>,
     ) -> Result<Vec<CrossChainRequest>, WorkerError> {
         // Load all the certificates we will need, regardless of the medium.
-        let heights = BTreeSet::from_iter(heights_by_recipient.values().flatten().copied());
-        let next_block_height = self.chain.tip_state.get().next_block_height;
-        let log_heights = heights
-            .range(..next_block_height)
-            .copied()
-            .map(usize::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut hashes = self
-            .chain
-            .confirmed_log
-            .multi_get(log_heights)
-            .await?
-            .into_iter()
-            .zip(&heights)
-            .map(|(maybe_hash, height)| {
-                maybe_hash.ok_or_else(|| WorkerError::ConfirmedLogEntryNotFound {
-                    height: *height,
-                    chain_id: self.chain_id(),
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let requested_heights: Vec<BlockHeight> = heights
-            .range(next_block_height..)
-            .copied()
-            .collect::<Vec<BlockHeight>>();
-        for (height, hash) in self
-            .chain
-            .preprocessed_blocks
-            .multi_get_pairs(requested_heights)
-            .await?
-        {
-            let hash = hash.ok_or_else(|| WorkerError::PreprocessedBlocksEntryNotFound {
+        let heights: Vec<_> = heights_by_recipient.values().flatten().copied().collect();
+        let mut hashes = Vec::new();
+        for (height, hash) in self.chain.block_hashes.multi_get_pairs(heights).await? {
+            let hash = hash.ok_or_else(|| WorkerError::BlockHashNotFound {
                 height,
                 chain_id: self.chain_id(),
             })?;
@@ -1134,13 +1106,13 @@ where
         Ok(())
     }
 
-    /// Returns the preprocessed block hashes in the given height range.
+    /// Returns the block hashes in the given height range.
     #[instrument(skip_all, fields(
         chain_id = %self.chain_id(),
         start = %start,
         end = %end
     ))]
-    async fn get_preprocessed_block_hashes(
+    async fn get_block_hashes_in_range(
         &self,
         start: BlockHeight,
         end: BlockHeight,
@@ -1148,7 +1120,7 @@ where
         let mut hashes = Vec::new();
         let mut height = start;
         while height < end {
-            match self.chain.preprocessed_blocks.get(&height).await? {
+            match self.chain.block_hashes.get(&height).await? {
                 Some(hash) => hashes.push(hash),
                 None => break,
             }
@@ -1193,7 +1165,7 @@ where
         &self,
         heights: Vec<BlockHeight>,
     ) -> Result<Vec<CryptoHash>, WorkerError> {
-        Ok(self.chain.block_hashes(heights).await?)
+        Ok(self.chain.get_block_hashes(heights).await?)
     }
 
     /// Gets proposed blobs from the manager for specified blob IDs.
@@ -1388,7 +1360,7 @@ where
         height: BlockHeight,
     ) -> Result<Option<ConfirmedBlockCertificate>, WorkerError> {
         self.initialize_and_save_if_needed().await?;
-        let certificate_hash = match self.chain.confirmed_log.get(height.try_into()?).await? {
+        let certificate_hash = match self.chain.block_hashes.get(&height).await? {
             Some(hash) => hash,
             None => return Ok(None),
         };
@@ -1754,7 +1726,7 @@ where
             info.requested_pending_message_bundles = bundles;
         }
         let hashes = chain
-            .block_hashes(query.request_sent_certificate_hashes_by_heights)
+            .get_block_hashes(query.request_sent_certificate_hashes_by_heights)
             .await?;
         info.requested_sent_certificate_hashes = hashes;
         if let Some(start) = query.request_received_log_excluding_first_n {

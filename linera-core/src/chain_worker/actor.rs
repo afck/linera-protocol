@@ -219,8 +219,8 @@ where
         callback: oneshot::Sender<Result<(), WorkerError>>,
     },
 
-    /// Get preprocessed block hashes in a given height range.
-    GetPreprocessedBlockHashes {
+    /// Get block hashes in a given height range.
+    GetBlockHashesInRange {
         start: BlockHeight,
         end: BlockHeight,
         #[debug(skip)]

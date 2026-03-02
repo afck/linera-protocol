@@ -288,7 +288,7 @@ pub enum WorkerError {
     #[error(transparent)]
     ViewError(#[from] ViewError),
 
-    #[error("Certificates are in confirmed_log but not in storage: {0:?}")]
+    #[error("Certificates not found in storage: {0:?}")]
     ReadCertificatesError(Vec<CryptoHash>),
 
     #[error(transparent)]
@@ -354,13 +354,8 @@ pub enum WorkerError {
     FastBlockUsingOracles,
     #[error("Blobs not found: {0:?}")]
     BlobsNotFound(Vec<BlobId>),
-    #[error("confirmed_log entry at height {height} for chain {chain_id:8} not found")]
-    ConfirmedLogEntryNotFound {
-        height: BlockHeight,
-        chain_id: ChainId,
-    },
-    #[error("preprocessed_blocks entry at height {height} for chain {chain_id:8} not found")]
-    PreprocessedBlocksEntryNotFound {
+    #[error("Block hash at height {height} for chain {chain_id:8} not found")]
+    BlockHashNotFound {
         height: BlockHeight,
         chain_id: ChainId,
     },
@@ -414,8 +409,7 @@ impl WorkerError {
             WorkerError::BcsError(_)
             | WorkerError::InvalidCrossChainRequest
             | WorkerError::ViewError(_)
-            | WorkerError::ConfirmedLogEntryNotFound { .. }
-            | WorkerError::PreprocessedBlocksEntryNotFound { .. }
+            | WorkerError::BlockHashNotFound { .. }
             | WorkerError::MissingNetworkDescription
             | WorkerError::ChainActorSendError { .. }
             | WorkerError::ChainActorRecvError { .. }
@@ -1341,21 +1335,21 @@ where
         .await
     }
 
-    /// Gets preprocessed block hashes in a given height range.
+    /// Gets block hashes in a given height range.
     #[instrument(skip_all, fields(
         nickname = %self.nickname,
         chain_id = %chain_id,
         start = %start,
         end = %end
     ))]
-    pub async fn get_preprocessed_block_hashes(
+    pub async fn get_block_hashes_in_range(
         &self,
         chain_id: ChainId,
         start: BlockHeight,
         end: BlockHeight,
     ) -> Result<Vec<CryptoHash>, WorkerError> {
         self.query_chain_worker(chain_id, move |callback| {
-            ChainWorkerRequest::GetPreprocessedBlockHashes {
+            ChainWorkerRequest::GetBlockHashesInRange {
                 start,
                 end,
                 callback,

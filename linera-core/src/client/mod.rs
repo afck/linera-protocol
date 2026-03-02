@@ -502,7 +502,7 @@ impl<Env: Environment> Client<Env> {
         let mut next_height = chain_info.next_block_height;
         let hashes = self
             .local_node
-            .get_preprocessed_block_hashes(chain_id, next_height, stop)
+            .get_block_hashes_in_range(chain_id, next_height, stop)
             .await?;
         let certificates = self.storage_client().read_certificates(&hashes).await?;
         let certificates = match ResultReadCertificates::new(certificates, hashes) {
