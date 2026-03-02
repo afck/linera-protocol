@@ -644,6 +644,11 @@ type InboxStateView {
 	At least one of `added_bundles` and `removed_bundles` should be empty.
 	"""
 	removedBundles: QueueView_MessageBundle_f4399f0b!
+	"""
+	The cursor at which this inbox was initialized (e.g. from a checkpoint).
+	Everything before this cursor is considered already removed.
+	"""
+	initialCursor: Cursor!
 }
 
 """

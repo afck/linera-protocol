@@ -78,6 +78,9 @@ where
     /// These bundles have been removed by anticipation and are waiting to be added.
     /// At least one of `added_bundles` and `removed_bundles` should be empty.
     pub removed_bundles: QueueView<C, MessageBundle>,
+    /// The cursor at which this inbox was initialized (e.g. from a checkpoint).
+    /// Everything before this cursor is considered already removed.
+    pub initial_cursor: RegisterView<C, Cursor>,
 }
 
 #[derive(Error, Debug)]
@@ -244,6 +247,11 @@ where
                 next_cursor: *self.next_cursor_to_add.get(),
             }
         );
+        // Bundles before the initial cursor were already processed before the checkpoint.
+        if cursor < *self.initial_cursor.get() {
+            self.next_cursor_to_add.set(cursor.try_add_one()?);
+            return Ok(false);
+        }
         // Find if the bundle was removed ahead of time.
         let newly_added = match self.removed_bundles.front().await? {
             Some(previous_bundle) => {
