@@ -105,6 +105,10 @@ pub struct SystemExecutionStateView<C> {
     /// For each recipient chain, the latest cursor and block hash of a message sent from
     /// this chain that is known to have been included (accepted or rejected) on the recipient.
     pub finalized_sent_messages: MapView<C, ChainId, (Cursor, CryptoHash)>,
+    /// The heights of previous blocks that sent messages to the same recipients.
+    pub previous_message_blocks: MapView<C, ChainId, BlockHeight>,
+    /// The heights of previous blocks that published events to the same streams.
+    pub previous_event_blocks: MapView<C, StreamId, BlockHeight>,
 }
 
 impl<C: Context, C2: Context> ReplaceContext<C2> for SystemExecutionStateView<C> {
@@ -129,6 +133,8 @@ impl<C: Context, C2: Context> ReplaceContext<C2> for SystemExecutionStateView<C>
             event_subscriptions: self.event_subscriptions.with_context(ctx.clone()).await,
             stream_event_counts: self.stream_event_counts.with_context(ctx.clone()).await,
             finalized_sent_messages: self.finalized_sent_messages.with_context(ctx.clone()).await,
+            previous_message_blocks: self.previous_message_blocks.with_context(ctx.clone()).await,
+            previous_event_blocks: self.previous_event_blocks.with_context(ctx.clone()).await,
         }
     }
 }
@@ -160,6 +166,8 @@ pub struct SystemExecutionStateSnapshot {
     pub event_subscriptions: BTreeMap<(ChainId, StreamId), EventSubscriptions>,
     pub stream_event_counts: BTreeMap<StreamId, u32>,
     pub finalized_sent_messages: BTreeMap<ChainId, (Cursor, CryptoHash)>,
+    pub previous_message_blocks: BTreeMap<ChainId, BlockHeight>,
+    pub previous_event_blocks: BTreeMap<StreamId, BlockHeight>,
 }
 
 impl<C> SystemExecutionStateView<C>
@@ -198,6 +206,18 @@ where
                 .await?
                 .into_iter()
                 .collect(),
+            previous_message_blocks: self
+                .previous_message_blocks
+                .index_values()
+                .await?
+                .into_iter()
+                .collect(),
+            previous_event_blocks: self
+                .previous_event_blocks
+                .index_values()
+                .await?
+                .into_iter()
+                .collect(),
         })
     }
 
@@ -221,6 +241,8 @@ where
             event_subscriptions,
             stream_event_counts,
             finalized_sent_messages,
+            previous_message_blocks,
+            previous_event_blocks,
         } = snapshot;
         self.description.set(description);
         self.epoch.set(epoch);
@@ -245,6 +267,12 @@ where
         }
         for (chain_id, entry) in finalized_sent_messages {
             self.finalized_sent_messages.insert(&chain_id, entry)?;
+        }
+        for (chain_id, height) in previous_message_blocks {
+            self.previous_message_blocks.insert(&chain_id, height)?;
+        }
+        for (stream_id, height) in previous_event_blocks {
+            self.previous_event_blocks.insert(&stream_id, height)?;
         }
         Ok(())
     }

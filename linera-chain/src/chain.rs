@@ -498,6 +498,13 @@ where
         // Deserialize execution state from the checkpoint blobs.
         let snapshot_bytes: Vec<u8> = execution_state_blobs.iter().copied().flatten().copied().collect();
         let snapshot: SystemExecutionStateSnapshot = bcs::from_bytes(&snapshot_bytes)?;
+
+        // Initialize next_expected_events from the snapshot's stream_event_counts,
+        // so event processing resumes from the correct index after the checkpoint.
+        for (stream_id, count) in &snapshot.stream_event_counts {
+            self.next_expected_events.insert(stream_id, *count)?;
+        }
+
         self.execution_state.system.load_snapshot(snapshot).await?;
 
         // Initialize each inbox with the checkpoint's cursor as the starting point.
@@ -509,7 +516,6 @@ where
         }
 
         // TODO(#460): Initialize outboxes from checkpoint blobs.
-        // TODO(#460): Initialize next_expected_events from previous_event_blocks.
 
         Ok(())
     }
@@ -891,11 +897,13 @@ where
         let mut recipient_heights = Vec::new();
         let mut heights = Vec::new();
         for (recipient, height) in chain
+            .system
             .previous_message_blocks
             .multi_get_pairs(recipients)
             .await?
         {
             chain
+                .system
                 .previous_message_blocks
                 .insert(&recipient, block.height)?;
             if let Some(height) = height {
@@ -914,8 +922,16 @@ where
         let streams = block_execution_tracker.event_streams();
         let mut stream_heights = Vec::new();
         let mut heights = Vec::new();
-        for (stream, height) in chain.previous_event_blocks.multi_get_pairs(streams).await? {
-            chain.previous_event_blocks.insert(&stream, block.height)?;
+        for (stream, height) in chain
+            .system
+            .previous_event_blocks
+            .multi_get_pairs(streams)
+            .await?
+        {
+            chain
+                .system
+                .previous_event_blocks
+                .insert(&stream, block.height)?;
             if let Some(height) = height {
                 heights.push(height);
                 stream_heights.push((stream, height));
