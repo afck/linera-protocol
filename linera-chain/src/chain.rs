@@ -8,6 +8,7 @@ use std::{
 
 use allocative::Allocative;
 use linera_base::{
+    bcs,
     crypto::{CryptoHash, ValidatorPublicKey},
     data_types::{
         ApplicationDescription, ApplicationPermissions, ArithmeticError, Blob, BlockHeight,
@@ -19,7 +20,7 @@ use linera_base::{
 };
 use linera_execution::{
     committee::Committee,
-    system::EPOCH_STREAM_NAME,
+    system::{SystemExecutionStateSnapshot, EPOCH_STREAM_NAME},
     CheckpointData, ExecutionRuntimeContext, ExecutionStateView, Message, Operation,
     OutgoingMessage, Query, QueryContext, QueryOutcome, ResourceController, ResourceTracker,
     ServiceRuntimeEndpoint, TransactionTracker,
@@ -474,11 +475,16 @@ where
 
     /// Initializes this chain's state from a checkpoint, so that the checkpoint block
     /// itself is the next block to be executed.
+    ///
+    /// The `execution_state_blobs` must be the raw bytes of each blob listed in
+    /// `checkpoint.execution_state_blobs`, in the same order. They are concatenated and
+    /// deserialized into the system execution state.
     pub async fn initialize_from_checkpoint(
         &mut self,
         height: BlockHeight,
         previous_block_hash: Option<CryptoHash>,
         checkpoint: &Checkpoint,
+        execution_state_blobs: &[&[u8]],
     ) -> Result<(), ChainError> {
         // Set tip state so that the checkpoint block is the next to execute.
         let tip = self.tip_state.get_mut();
@@ -489,6 +495,11 @@ where
         self.execution_state_hash
             .set(Some(checkpoint.execution_state_hash));
 
+        // Deserialize execution state from the checkpoint blobs.
+        let snapshot_bytes: Vec<u8> = execution_state_blobs.iter().copied().flatten().copied().collect();
+        let snapshot: SystemExecutionStateSnapshot = bcs::from_bytes(&snapshot_bytes)?;
+        self.execution_state.system.load_snapshot(snapshot).await?;
+
         // Initialize each inbox with the checkpoint's cursor as the starting point.
         for (origin, cursor) in &checkpoint.next_cursors_to_remove {
             let mut inbox = self.inboxes.try_load_entry_mut(origin).await?;
@@ -497,7 +508,6 @@ where
             inbox.initial_cursor.set(*cursor);
         }
 
-        // TODO(#460): Deserialize execution state from checkpoint blobs.
         // TODO(#460): Initialize outboxes from checkpoint blobs.
         // TODO(#460): Initialize next_expected_events from previous_event_blocks.
 

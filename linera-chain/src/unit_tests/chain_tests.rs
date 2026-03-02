@@ -897,8 +897,12 @@ async fn test_initialize_from_checkpoint() -> anyhow::Result<()> {
     let execution_state_hash = CryptoHash::test_hash("execution_state");
     let height = BlockHeight::from(42);
 
+    // Create a serialized execution state snapshot blob.
+    let snapshot = linera_execution::system::SystemExecutionStateSnapshot::default();
+    let snapshot_bytes = bcs::to_bytes(&snapshot)?;
+
     let checkpoint = Checkpoint {
-        execution_state_blobs: vec![],
+        execution_state_blobs: vec![CryptoHash::test_hash("snapshot_blob")],
         execution_state_hash,
         outgoing_messages_blobs: vec![],
         next_cursors_to_remove: vec![
@@ -908,7 +912,12 @@ async fn test_initialize_from_checkpoint() -> anyhow::Result<()> {
     };
 
     chain
-        .initialize_from_checkpoint(height, Some(previous_block_hash), &checkpoint)
+        .initialize_from_checkpoint(
+            height,
+            Some(previous_block_hash),
+            &checkpoint,
+            &[&snapshot_bytes],
+        )
         .await?;
 
     // Verify tip state.

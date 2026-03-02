@@ -144,7 +144,7 @@ pub struct EventSubscriptions {
 }
 
 /// A serializable snapshot of the system execution state, for checkpoint blobs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SystemExecutionStateSnapshot {
     pub description: Option<ChainDescription>,
     pub epoch: Epoch,
