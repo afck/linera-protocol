@@ -730,9 +730,15 @@ where
                         },
                     ));
                 }
+                // Create a blob containing the serialized execution state snapshot.
+                let snapshot = self.to_snapshot().await?;
+                let snapshot_bytes = bcs::to_bytes(&snapshot)?;
+                let execution_state_blob = Blob::new_data(snapshot_bytes);
+                let execution_state_blob_hash = execution_state_blob.id().hash;
+                txn_tracker.add_created_blob(execution_state_blob);
                 // Record the checkpoint as an oracle response.
                 let checkpoint = linera_base::data_types::Checkpoint {
-                    execution_state_blobs: vec![], // TODO(#460): Serialize execution state.
+                    execution_state_blobs: vec![execution_state_blob_hash],
                     execution_state_hash: data.execution_state_hash,
                     outgoing_messages_blobs: vec![], // TODO(#460): Serialize outgoing messages.
                     next_cursors_to_remove: data.inbox_cursors,
