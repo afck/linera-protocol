@@ -19,7 +19,7 @@ use linera_base::{
     },
     ensure,
     hashed::Hashed,
-    identifiers::{AccountOwner, ApplicationId, BlobId, ChainId, EventId, StreamId},
+    identifiers::{AccountOwner, ApplicationId, BlobId, BlobType, ChainId, EventId, StreamId},
 };
 use linera_chain::{
     data_types::{
@@ -856,6 +856,41 @@ where
             .into_iter()
             .map(|blob| (blob.id(), blob))
             .collect::<BTreeMap<_, _>>();
+
+        // If this block has a checkpoint and the chain is behind, initialize from the
+        // checkpoint to jump ahead to the block's height instead of leaving a gap.
+        if tip.next_block_height < height {
+            if let Some(checkpoint) = block.checkpoint() {
+                let execution_state_blob_bytes: Vec<Vec<u8>> = checkpoint
+                    .execution_state_blobs
+                    .iter()
+                    .map(|hash| {
+                        let blob_id = BlobId::new(*hash, BlobType::Data);
+                        blobs
+                            .get(&blob_id)
+                            .map(|blob| blob.bytes().to_vec())
+                            .ok_or_else(|| WorkerError::BlobsNotFound(vec![blob_id]))
+                    })
+                    .collect::<Result<_, _>>()?;
+                let blob_slices: Vec<&[u8]> = execution_state_blob_bytes
+                    .iter()
+                    .map(|b| b.as_slice())
+                    .collect();
+                self.chain
+                    .initialize_from_checkpoint(
+                        height,
+                        block.header.previous_block_hash,
+                        checkpoint,
+                        &blob_slices,
+                    )
+                    .await?;
+                self.save().await?;
+                self.knows_chain_is_active = true;
+            }
+        }
+
+        // Re-read the tip state after potential checkpoint initialization.
+        let tip = self.chain.tip_state.get().clone();
 
         // If this block is higher than the next expected block in this chain, we're going
         // to have a gap: do not execute this block, only update the outboxes and return.
