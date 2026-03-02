@@ -730,15 +730,21 @@ where
                         },
                     ));
                 }
-                // Create a blob containing the serialized execution state snapshot.
+                // Create blob(s) containing the serialized execution state snapshot.
+                // Split into multiple blobs if the serialized data exceeds the maximum
+                // blob size.
                 let snapshot = self.to_snapshot().await?;
                 let snapshot_bytes = bcs::to_bytes(&snapshot)?;
-                let execution_state_blob = Blob::new_data(snapshot_bytes);
-                let execution_state_blob_hash = execution_state_blob.id().hash;
-                txn_tracker.add_created_blob(execution_state_blob);
+                let max_blob_size = resource_controller.policy().maximum_blob_size as usize;
+                let mut execution_state_blob_hashes = Vec::new();
+                for chunk in snapshot_bytes.chunks(max_blob_size) {
+                    let blob = Blob::new_data(chunk);
+                    execution_state_blob_hashes.push(blob.id().hash);
+                    txn_tracker.add_created_blob(blob);
+                }
                 // Record the checkpoint as an oracle response.
                 let checkpoint = linera_base::data_types::Checkpoint {
-                    execution_state_blobs: vec![execution_state_blob_hash],
+                    execution_state_blobs: execution_state_blob_hashes,
                     execution_state_hash: data.execution_state_hash,
                     outgoing_messages_blobs: vec![], // TODO(#460): Serialize outgoing messages.
                     next_cursors_to_remove: data.inbox_cursors,
