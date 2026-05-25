@@ -36,6 +36,9 @@ service ValidatorWorker {
   // Handle a blob that belongs to a pending block on the given chain.
   rpc HandlePendingBlob(HandlePendingBlobRequest) returns (ChainInfoResult);
 
+  // Download a block from the validator's cache of voted-on blocks.
+  rpc DownloadPendingBlock(PendingBlockRequest) returns (PendingBlockResult);
+
   // Handle a (trusted!) cross-chain request.
   rpc HandleCrossChainRequest(CrossChainRequest) returns (google.protobuf.Empty);
 }
@@ -80,6 +83,9 @@ service ValidatorNode {
 
   // Handle a blob that belongs to a pending block on the given chain.
   rpc HandlePendingBlob(HandlePendingBlobRequest) returns (ChainInfoResult);
+
+  // Download a block from the validator's cache of voted-on blocks.
+  rpc DownloadPendingBlock(PendingBlockRequest) returns (PendingBlockResult);
 
   // Upload a blob. Returns an error if the validator has not seen a
   // certificate using this blob.
@@ -360,6 +366,24 @@ message PendingBlobResult {
 message HandlePendingBlobRequest {
   ChainId chain_id = 1;
   BlobContent blob = 2;
+}
+
+// A request for a block from the validator's cache of voted-on blocks.
+message PendingBlockRequest {
+  ChainId chain_id = 1;
+  CryptoHash hash = 2;
+}
+
+// The cached block, an indication that it is not in the cache, or an error.
+message PendingBlockResult {
+  oneof inner {
+    // A bincode-serialized `ConfirmedBlock`.
+    bytes block = 1;
+    // Signals that the block is not (or no longer) in the validator's cache.
+    bool not_found = 2;
+    // A bincode-serialized `NodeError`.
+    bytes error = 3;
+  }
 }
 
 // A certified statement from the committee.

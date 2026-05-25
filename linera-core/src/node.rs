@@ -147,6 +147,17 @@ pub trait ValidatorNode {
         blob: BlobContent,
     ) -> Result<ChainInfoResponse, NodeError>;
 
+    /// Downloads a block from the validator's cache of voted-on blocks, returning `None` if
+    /// the block is not (or no longer) in the cache. The cache is populated whenever the
+    /// validator signs a vote on a proposed or validated block. Useful for diagnostics when
+    /// validators have voted for an unexpected block hash, and as a lookup for lite-certificate
+    /// reconstruction.
+    async fn download_pending_block(
+        &self,
+        chain_id: ChainId,
+        hash: CryptoHash,
+    ) -> Result<Option<ConfirmedBlock>, NodeError>;
+
     async fn download_certificate(
         &self,
         hash: CryptoHash,

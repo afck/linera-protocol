@@ -9,7 +9,8 @@ use linera_base::{
 use linera_chain::{
     data_types::BlockProposal,
     types::{
-        ConfirmedBlockCertificate, LiteCertificate, TimeoutCertificate, ValidatedBlockCertificate,
+        ConfirmedBlock, ConfirmedBlockCertificate, LiteCertificate, TimeoutCertificate,
+        ValidatedBlockCertificate,
     },
 };
 use linera_core::{
@@ -235,6 +236,25 @@ impl ValidatorNode for Client {
             #[cfg(with_simple_network)]
             Client::Simple(simple_client) => {
                 simple_client.handle_pending_blob(chain_id, blob).await?
+            }
+        })
+    }
+
+    async fn download_pending_block(
+        &self,
+        chain_id: ChainId,
+        hash: CryptoHash,
+    ) -> Result<Option<ConfirmedBlock>, NodeError> {
+        Ok(match self {
+            Client::Grpc(grpc_client) => {
+                grpc_client.download_pending_block(chain_id, hash).await?
+            }
+
+            #[cfg(with_simple_network)]
+            Client::Simple(simple_client) => {
+                simple_client
+                    .download_pending_block(chain_id, hash)
+                    .await?
             }
         })
     }

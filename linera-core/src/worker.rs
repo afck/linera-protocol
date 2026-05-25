@@ -1671,6 +1671,28 @@ where
         nick = self.nickname(),
         chain_id = format!("{:.8}", chain_id)
     ))]
+    pub fn download_pending_block(
+        &self,
+        chain_id: ChainId,
+        hash: CryptoHash,
+    ) -> Option<CacheArc<ConfirmedBlock>> {
+        trace!("{} <-- download_pending_block({hash})", self.nickname());
+        let result = self
+            .block_cache
+            .get(&hash)
+            .filter(|block| block.chain_id() == chain_id);
+        trace!(
+            "{} --> {:?}",
+            self.nickname(),
+            result.as_ref().map(|_| hash)
+        );
+        result
+    }
+
+    #[instrument(skip_all, fields(
+        nick = self.nickname(),
+        chain_id = format!("{:.8}", chain_id)
+    ))]
     pub async fn handle_pending_blob(
         &self,
         chain_id: ChainId,

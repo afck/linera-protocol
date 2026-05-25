@@ -19,7 +19,7 @@ use linera_core::{
     worker::{NetworkActions, Notification, Reason, WorkerState},
     JoinSetExt as _, TaskHandle,
 };
-use linera_storage::Storage;
+use linera_storage::{Arc as CacheArc, Storage};
 use tokio::sync::{broadcast::error::RecvError, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{transport::Channel, Request, Response, Status};
@@ -34,6 +34,7 @@ use super::{
         validator_worker_server::{ValidatorWorker as ValidatorWorkerRpc, ValidatorWorkerServer},
         BlockProposal, ChainInfoQuery, ChainInfoResult, CrossChainRequest,
         HandlePendingBlobRequest, LiteCertificate, PendingBlobRequest, PendingBlobResult,
+        PendingBlockRequest, PendingBlockResult,
     },
     pool::GrpcConnectionPool,
     GrpcError, GRPC_MAX_MESSAGE_SIZE,
@@ -1037,6 +1038,30 @@ where
             chain_id = ?request.get_ref().chain_id()
         )
     )]
+    async fn download_pending_block(
+        &self,
+        request: Request<PendingBlockRequest>,
+    ) -> Result<Response<PendingBlockResult>, Status> {
+        let traffic_type = Self::get_traffic_type(&request);
+        let (chain_id, hash) = request.into_inner().try_into()?;
+        trace!(?hash, "Download pending block");
+        let maybe_block = self
+            .state
+            .download_pending_block(chain_id, hash)
+            .map(CacheArc::unwrap_or_clone);
+        Self::log_request_success("download_pending_block", traffic_type);
+        Ok(Response::new(maybe_block.try_into()?))
+    }
+
+    #[instrument(
+        target = "grpc_server",
+        skip_all,
+        err,
+        fields(
+            nickname = self.state.nickname(),
+            chain_id = ?request.get_ref().chain_id()
+        )
+    )]
     async fn handle_cross_chain_request(
         &self,
         request: Request<CrossChainRequest>,
@@ -1116,6 +1141,12 @@ impl GrpcProxyable for PendingBlobRequest {
 }
 
 impl GrpcProxyable for HandlePendingBlobRequest {
+    fn chain_id(&self) -> Option<ChainId> {
+        self.chain_id.clone()?.try_into().ok()
+    }
+}
+
+impl GrpcProxyable for PendingBlockRequest {
     fn chain_id(&self) -> Option<ChainId> {
         self.chain_id.clone()?.try_into().ok()
     }

@@ -572,6 +572,8 @@ where
             | DownloadBlobs(_)
             | DownloadPendingBlob(_)
             | DownloadPendingBlobResponse(_)
+            | DownloadPendingBlock(_)
+            | DownloadPendingBlockResponse(_)
             | HandlePendingBlob(_)
             | BlobLastUsedByResponse(_)
             | BlobLastUsedByCertificateResponse(_)

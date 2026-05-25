@@ -85,6 +85,11 @@ pub enum RpcMessage {
     // Notification subscription
     SubscribeNotifications(Vec<ChainId>),
     Notification(Box<Notification>),
+
+    // Validator-cached block lookup. Appended at the end of the enum to keep
+    // bincode tag values stable for the existing variants.
+    DownloadPendingBlock(Box<(ChainId, CryptoHash)>),
+    DownloadPendingBlockResponse(Box<Option<ConfirmedBlock>>),
 }
 
 impl RpcMessage {
@@ -103,6 +108,7 @@ impl RpcMessage {
             ChainInfoQuery(query) => query.chain_id,
             CrossChainRequest(request) => request.target_chain_id(),
             DownloadPendingBlob(request) => request.0,
+            DownloadPendingBlock(request) => request.0,
             DownloadCertificatesByHeights(chain_id, _) => *chain_id,
             HandlePendingBlob(request) => request.0,
             ShardInfoQuery(chain_id) => *chain_id,
@@ -119,6 +125,7 @@ impl RpcMessage {
             | DownloadBlobs(_)
             | DownloadBlobResponse(_)
             | DownloadPendingBlobResponse(_)
+            | DownloadPendingBlockResponse(_)
             | DownloadConfirmedBlock(_)
             | DownloadConfirmedBlockResponse(_)
             | DownloadCertificatesByHeightsResponse(_)
@@ -177,6 +184,8 @@ impl RpcMessage {
             | UploadBlobResponse(_)
             | DownloadPendingBlob(_)
             | DownloadPendingBlobResponse(_)
+            | DownloadPendingBlock(_)
+            | DownloadPendingBlockResponse(_)
             | HandlePendingBlob(_)
             | DownloadBlobResponse(_)
             | DownloadConfirmedBlockResponse(_)
@@ -231,6 +240,17 @@ impl TryFrom<RpcMessage> for ConfirmedBlock {
     fn try_from(message: RpcMessage) -> Result<Self, Self::Error> {
         match message {
             RpcMessage::DownloadConfirmedBlockResponse(certificate) => Ok(*certificate),
+            RpcMessage::Error(error) => Err(*error),
+            _ => Err(NodeError::UnexpectedMessage),
+        }
+    }
+}
+
+impl TryFrom<RpcMessage> for Option<ConfirmedBlock> {
+    type Error = NodeError;
+    fn try_from(message: RpcMessage) -> Result<Self, Self::Error> {
+        match message {
+            RpcMessage::DownloadPendingBlockResponse(block) => Ok(*block),
             RpcMessage::Error(error) => Err(*error),
             _ => Err(NodeError::UnexpectedMessage),
         }

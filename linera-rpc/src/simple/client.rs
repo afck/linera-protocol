@@ -12,7 +12,8 @@ use linera_base::{
 use linera_chain::{
     data_types::BlockProposal,
     types::{
-        ConfirmedBlockCertificate, LiteCertificate, TimeoutCertificate, ValidatedBlockCertificate,
+        ConfirmedBlock, ConfirmedBlockCertificate, LiteCertificate, TimeoutCertificate,
+        ValidatedBlockCertificate,
     },
 };
 use linera_core::{
@@ -249,6 +250,17 @@ impl ValidatorNode for SimpleClient {
     ) -> Result<ChainInfoResponse, NodeError> {
         self.query(RpcMessage::HandlePendingBlob(Box::new((chain_id, blob))))
             .await
+    }
+
+    async fn download_pending_block(
+        &self,
+        chain_id: ChainId,
+        hash: CryptoHash,
+    ) -> Result<Option<ConfirmedBlock>, NodeError> {
+        self.query(RpcMessage::DownloadPendingBlock(Box::new((
+            chain_id, hash,
+        ))))
+        .await
     }
 
     async fn download_certificate(

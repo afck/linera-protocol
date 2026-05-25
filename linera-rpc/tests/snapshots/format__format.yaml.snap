@@ -1193,6 +1193,17 @@ RpcMessage:
       Notification:
         NEWTYPE:
           TYPENAME: Notification
+    40:
+      DownloadPendingBlock:
+        NEWTYPE:
+          TUPLE:
+            - TYPENAME: ChainId
+            - TYPENAME: CryptoHash
+    41:
+      DownloadPendingBlockResponse:
+        NEWTYPE:
+          OPTION:
+            TYPENAME: Block
 Secp256k1PublicKey:
   NEWTYPESTRUCT:
     TUPLEARRAY:

@@ -243,6 +243,17 @@ where
         .await
     }
 
+    async fn download_pending_block(
+        &self,
+        chain_id: ChainId,
+        hash: CryptoHash,
+    ) -> Result<Option<ConfirmedBlock>, NodeError> {
+        self.spawn_and_receive(move |validator, sender| {
+            validator.do_download_pending_block(chain_id, hash, sender)
+        })
+        .await
+    }
+
     async fn download_certificate(
         &self,
         hash: CryptoHash,
@@ -582,6 +593,20 @@ where
             .await
             .map_err(Into::into);
         sender.send(result)
+    }
+
+    async fn do_download_pending_block(
+        self,
+        chain_id: ChainId,
+        hash: CryptoHash,
+        sender: oneshot::Sender<Result<Option<ConfirmedBlock>, NodeError>>,
+    ) -> Result<(), Result<Option<ConfirmedBlock>, NodeError>> {
+        let validator = self.client.lock().await;
+        let result = validator
+            .state
+            .download_pending_block(chain_id, hash)
+            .map(CacheArc::unwrap_or_clone);
+        sender.send(Ok(result))
     }
 
     async fn do_download_certificate(

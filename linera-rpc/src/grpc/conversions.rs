@@ -27,7 +27,7 @@ use linera_core::{
 use thiserror::Error;
 use tonic::{Code, Status};
 
-use super::api::{self, PendingBlobRequest};
+use super::api::{self, PendingBlobRequest, PendingBlockRequest};
 use crate::{
     HandleConfirmedCertificateRequest, HandleLiteCertRequest, HandleTimeoutCertificateRequest,
     HandleValidatedCertificateRequest,
@@ -849,6 +849,51 @@ impl TryFrom<NodeError> for api::PendingBlobResult {
     }
 }
 
+impl TryFrom<(ChainId, CryptoHash)> for api::PendingBlockRequest {
+    type Error = GrpcProtoConversionError;
+
+    fn try_from((chain_id, hash): (ChainId, CryptoHash)) -> Result<Self, Self::Error> {
+        Ok(Self {
+            chain_id: Some(chain_id.into()),
+            hash: Some(hash.into()),
+        })
+    }
+}
+
+impl TryFrom<api::PendingBlockRequest> for (ChainId, CryptoHash) {
+    type Error = GrpcProtoConversionError;
+
+    fn try_from(request: PendingBlockRequest) -> Result<Self, Self::Error> {
+        Ok((
+            try_proto_convert(request.chain_id)?,
+            try_proto_convert(request.hash)?,
+        ))
+    }
+}
+
+impl TryFrom<Option<ConfirmedBlock>> for api::PendingBlockResult {
+    type Error = GrpcProtoConversionError;
+
+    fn try_from(maybe_block: Option<ConfirmedBlock>) -> Result<Self, Self::Error> {
+        let inner = match maybe_block {
+            Some(block) => api::pending_block_result::Inner::Block(bincode::serialize(&block)?),
+            None => api::pending_block_result::Inner::NotFound(true),
+        };
+        Ok(Self { inner: Some(inner) })
+    }
+}
+
+impl TryFrom<NodeError> for api::PendingBlockResult {
+    type Error = GrpcProtoConversionError;
+
+    fn try_from(node_error: NodeError) -> Result<Self, Self::Error> {
+        let error = bincode::serialize(&node_error)?;
+        Ok(api::PendingBlockResult {
+            inner: Some(api::pending_block_result::Inner::Error(error)),
+        })
+    }
+}
+
 impl From<BlockHeight> for api::BlockHeight {
     fn from(block_height: BlockHeight) -> Self {
         Self {
@@ -1263,6 +1308,25 @@ pub mod tests {
         let blob_content = BlobContent::new_data(*b"foo");
         let pending_blob_request = (chain_id, blob_content);
         round_trip_check::<_, api::HandlePendingBlobRequest>(&pending_blob_request);
+    }
+
+    #[test]
+    pub fn test_pending_block_request() {
+        let request = (dummy_chain_id(2), CryptoHash::new(&Foo("block".into())));
+        round_trip_check::<_, api::PendingBlockRequest>(&request);
+    }
+
+    #[test]
+    pub fn test_pending_block_result() {
+        let block = ConfirmedBlock::new(
+            BlockExecutionOutcome {
+                state_hash: CryptoHash::new(&Foo("state".into())),
+                ..BlockExecutionOutcome::default()
+            }
+            .with(get_block()),
+        );
+        round_trip_check::<_, api::PendingBlockResult>(&Some(block));
+        round_trip_check::<_, api::PendingBlockResult>(&None::<ConfirmedBlock>);
     }
 
     #[test]

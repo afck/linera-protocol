@@ -101,6 +101,14 @@ impl ValidatorNode for DummyValidatorNode {
         Err(NodeError::UnexpectedMessage)
     }
 
+    async fn download_pending_block(
+        &self,
+        _: ChainId,
+        _: CryptoHash,
+    ) -> Result<Option<ConfirmedBlock>, NodeError> {
+        Err(NodeError::UnexpectedMessage)
+    }
+
     async fn subscribe(&self, _: Vec<ChainId>) -> Result<NotificationStream, NodeError> {
         Err(NodeError::UnexpectedMessage)
     }

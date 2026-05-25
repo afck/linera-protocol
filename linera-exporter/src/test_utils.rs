@@ -351,6 +351,13 @@ impl ValidatorNode for DummyValidator {
         unimplemented!()
     }
 
+    async fn download_pending_block(
+        &self,
+        _request: Request<linera_rpc::grpc::api::PendingBlockRequest>,
+    ) -> Result<Response<linera_rpc::grpc::api::PendingBlockResult>, Status> {
+        unimplemented!()
+    }
+
     async fn download_certificate(
         &self,
         _request: Request<linera_rpc::grpc::api::CryptoHash>,

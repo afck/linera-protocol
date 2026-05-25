@@ -37,7 +37,8 @@ use linera_rpc::{
             BlobContent, BlobId, BlobIds, BlockProposal, Certificate, CertificatesBatchRequest,
             CertificatesBatchResponse, ChainInfoResult, CryptoHash, HandlePendingBlobRequest,
             LiteCertificate, NetworkDescription, Notification, NotificationBatch,
-            PendingBlobRequest, PendingBlobResult, RawCertificate, RawCertificatesBatch,
+            PendingBlobRequest, PendingBlobResult, PendingBlockRequest, PendingBlockResult,
+            RawCertificate, RawCertificatesBatch,
             SubscriptionRequest, VersionInfo,
         },
         pool::GrpcConnectionPool,
@@ -658,6 +659,15 @@ where
     ) -> Result<Response<ChainInfoResult>, Status> {
         let (mut client, inner) = self.worker_client(request)?;
         client.handle_pending_blob(inner).await
+    }
+
+    #[instrument(skip_all, err(Display), fields(method = "download_pending_block"))]
+    async fn download_pending_block(
+        &self,
+        request: Request<PendingBlockRequest>,
+    ) -> Result<Response<PendingBlockResult>, Status> {
+        let (mut client, inner) = self.worker_client(request)?;
+        client.download_pending_block(inner).await
     }
 
     #[instrument(skip_all, err(Display), fields(method = "download_certificate"))]

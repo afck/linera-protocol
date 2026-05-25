@@ -232,6 +232,28 @@ impl TryFrom<api::PendingBlobResult> for BlobContent {
     }
 }
 
+impl TryFrom<api::PendingBlockResult> for Option<ConfirmedBlock> {
+    type Error = NodeError;
+
+    fn try_from(result: api::PendingBlockResult) -> Result<Self, Self::Error> {
+        let inner = result.inner.ok_or_else(|| NodeError::GrpcError {
+            error: "missing body from response".to_string(),
+        })?;
+        match inner {
+            api::pending_block_result::Inner::Block(bytes) => Ok(Some(
+                bincode::deserialize(&bytes).map_err(|err| NodeError::GrpcError {
+                    error: format!("failed to unmarshal response: {err}"),
+                })?,
+            )),
+            api::pending_block_result::Inner::NotFound(_) => Ok(None),
+            api::pending_block_result::Inner::Error(error) => Err(bincode::deserialize(&error)
+                .map_err(|err| NodeError::GrpcError {
+                    error: format!("failed to unmarshal error message: {err}"),
+                })?),
+        }
+    }
+}
+
 macro_rules! client_delegate {
     ($self:ident, $handler:ident, $req:ident) => {{
         debug!(
@@ -530,6 +552,16 @@ impl ValidatorNode for GrpcClient {
     ) -> Result<ChainInfoResponse, NodeError> {
         let req = (chain_id, blob);
         GrpcClient::try_into_chain_info(client_delegate!(self, handle_pending_blob, req)?)
+    }
+
+    #[instrument(target = "grpc_client", skip(self), err(level = Level::DEBUG), fields(address = self.address))]
+    async fn download_pending_block(
+        &self,
+        chain_id: ChainId,
+        hash: CryptoHash,
+    ) -> Result<Option<ConfirmedBlock>, NodeError> {
+        let req = (chain_id, hash);
+        client_delegate!(self, download_pending_block, req)?.try_into()
     }
 
     #[instrument(target = "grpc_client", skip_all, err(level = Level::DEBUG), fields(address = self.address))]

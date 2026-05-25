@@ -12,7 +12,7 @@ use linera_core::{
     worker::{NetworkActions, Notification, WorkerError, WorkerState},
     JoinSetExt as _,
 };
-use linera_storage::Storage;
+use linera_storage::{Arc as CacheArc, Storage};
 use tokio::{sync, sync::oneshot, task::JoinSet};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::sync::CancellationToken;
@@ -373,6 +373,17 @@ where
                     }
                 }
             }
+            RpcMessage::DownloadPendingBlock(request) => {
+                let (chain_id, hash) = *request;
+                let maybe_block = self
+                    .server
+                    .state
+                    .download_pending_block(chain_id, hash)
+                    .map(CacheArc::unwrap_or_clone);
+                Ok(Some(RpcMessage::DownloadPendingBlockResponse(Box::new(
+                    maybe_block,
+                ))))
+            }
 
             RpcMessage::VersionInfoQuery => {
                 Ok(Some(RpcMessage::VersionInfoResponse(Box::default())))
@@ -395,6 +406,7 @@ where
             | RpcMessage::DownloadBlobs(_)
             | RpcMessage::DownloadBlobResponse(_)
             | RpcMessage::DownloadPendingBlobResponse(_)
+            | RpcMessage::DownloadPendingBlockResponse(_)
             | RpcMessage::DownloadConfirmedBlock(_)
             | RpcMessage::DownloadConfirmedBlockResponse(_)
             | RpcMessage::BlobLastUsedBy(_)
