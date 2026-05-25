@@ -246,15 +246,11 @@ impl ValidatorNode for Client {
         hash: CryptoHash,
     ) -> Result<Option<ConfirmedBlock>, NodeError> {
         Ok(match self {
-            Client::Grpc(grpc_client) => {
-                grpc_client.download_pending_block(chain_id, hash).await?
-            }
+            Client::Grpc(grpc_client) => grpc_client.download_pending_block(chain_id, hash).await?,
 
             #[cfg(with_simple_network)]
             Client::Simple(simple_client) => {
-                simple_client
-                    .download_pending_block(chain_id, hash)
-                    .await?
+                simple_client.download_pending_block(chain_id, hash).await?
             }
         })
     }

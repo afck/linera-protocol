@@ -257,10 +257,8 @@ impl ValidatorNode for SimpleClient {
         chain_id: ChainId,
         hash: CryptoHash,
     ) -> Result<Option<ConfirmedBlock>, NodeError> {
-        self.query(RpcMessage::DownloadPendingBlock(Box::new((
-            chain_id, hash,
-        ))))
-        .await
+        self.query(RpcMessage::DownloadPendingBlock(Box::new((chain_id, hash))))
+            .await
     }
 
     async fn download_certificate(

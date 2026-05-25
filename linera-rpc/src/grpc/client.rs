@@ -240,11 +240,13 @@ impl TryFrom<api::PendingBlockResult> for Option<ConfirmedBlock> {
             error: "missing body from response".to_string(),
         })?;
         match inner {
-            api::pending_block_result::Inner::Block(bytes) => Ok(Some(
-                bincode::deserialize(&bytes).map_err(|err| NodeError::GrpcError {
-                    error: format!("failed to unmarshal response: {err}"),
-                })?,
-            )),
+            api::pending_block_result::Inner::Block(bytes) => {
+                Ok(Some(bincode::deserialize(&bytes).map_err(|err| {
+                    NodeError::GrpcError {
+                        error: format!("failed to unmarshal response: {err}"),
+                    }
+                })?))
+            }
             api::pending_block_result::Inner::NotFound(_) => Ok(None),
             api::pending_block_result::Inner::Error(error) => Err(bincode::deserialize(&error)
                 .map_err(|err| NodeError::GrpcError {
