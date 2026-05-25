@@ -1053,7 +1053,7 @@ impl<Env: Environment> Client<Env> {
 
     /// Submits a block proposal to the validators.
     #[instrument(level = "trace", skip_all)]
-    async fn submit_block_proposal<T: ProcessableCertificate>(
+    async fn submit_block_proposal<T: ProcessableCertificate + MaybeBlock>(
         self: &Arc<Self>,
         committee: Arc<Committee>,
         proposal: Box<BlockProposal>,
@@ -1161,7 +1161,7 @@ impl<Env: Environment> Client<Env> {
     /// In that case, it verifies that the validator votes are for the provided value,
     /// and returns a certificate.
     #[instrument(level = "trace", skip_all)]
-    async fn communicate_chain_action<T: CertificateValue>(
+    async fn communicate_chain_action<T: CertificateValue + MaybeBlock>(
         self: &Arc<Self>,
         committee: &Committee,
         action: CommunicateAction,
@@ -1184,15 +1184,24 @@ impl<Env: Environment> Client<Env> {
             self.options.quorum_grace_period,
         )
         .await?;
-        ensure!(
-            (votes_hash, votes_round) == (value.hash(), action.round()),
-            chain_client::Error::UnexpectedQuorum {
+        if (votes_hash, votes_round) != (value.hash(), action.round()) {
+            if let Some(expected_block) = value.maybe_block() {
+                diagnose_unexpected_quorum(
+                    &nodes,
+                    &votes,
+                    value.chain_id(),
+                    votes_hash,
+                    expected_block,
+                )
+                .await;
+            }
+            return Err(chain_client::Error::UnexpectedQuorum {
                 hash: votes_hash,
                 round: votes_round,
                 expected_hash: value.hash(),
                 expected_round: action.round(),
-            }
-        );
+            });
+        }
         // Certificate is valid because
         // * `communicate_with_quorum` ensured a sufficient "weight" of
         // (non-error) answers were returned by validators.
@@ -2099,6 +2108,186 @@ fn filter_new<T: Clone + Eq + std::hash::Hash>(
         .filter(|id| !already_downloaded.contains(*id))
         .cloned()
         .collect()
+}
+
+/// Provides access to the inner [`Block`] of a [`CertificateValue`] that wraps one.
+///
+/// Used by [`Client::communicate_chain_action`] to extract the proposed block for
+/// diagnostics. Implemented for all [`CertificateValue`] types, returning `None`
+/// for [`Timeout`](linera_chain::types::Timeout).
+pub(crate) trait MaybeBlock {
+    fn maybe_block(&self) -> Option<&Block>;
+}
+
+impl MaybeBlock for ConfirmedBlock {
+    fn maybe_block(&self) -> Option<&Block> {
+        Some(ConfirmedBlock::block(self))
+    }
+}
+
+impl MaybeBlock for ValidatedBlock {
+    fn maybe_block(&self) -> Option<&Block> {
+        Some(ValidatedBlock::block(self))
+    }
+}
+
+impl MaybeBlock for linera_chain::types::Timeout {
+    fn maybe_block(&self) -> Option<&Block> {
+        None
+    }
+}
+
+/// Fetches the block at `votes_hash` from any voting validator's cache, then logs
+/// a structured comparison against `expected_block`. Best-effort: any I/O failure
+/// or eviction just shortens the diagnostic.
+async fn diagnose_unexpected_quorum<N: crate::node::ValidatorNode + Clone + 'static>(
+    nodes: &[RemoteNode<N>],
+    votes: &[(ValidatorPublicKey, LiteVote)],
+    chain_id: ChainId,
+    votes_hash: CryptoHash,
+    expected_block: &Block,
+) {
+    let voters: HashSet<ValidatorPublicKey> =
+        votes.iter().map(|(public_key, _)| *public_key).collect();
+    let mut requests: FuturesUnordered<_> = nodes
+        .iter()
+        .filter(|remote_node| voters.contains(&remote_node.public_key))
+        .map(|remote_node| {
+            let node = remote_node.node.clone();
+            let address = remote_node.public_key;
+            async move {
+                let result = node.download_pending_block(chain_id, votes_hash).await;
+                (address, result)
+            }
+        })
+        .collect();
+
+    let mut voted_block: Option<Block> = None;
+    while let Some((address, result)) = requests.next().await {
+        match result {
+            Ok(Some(block)) => {
+                voted_block = Some(block.into_block());
+                break;
+            }
+            Ok(None) => {
+                debug!(%address, "validator no longer has the voted-on block in its cache");
+            }
+            Err(error) => {
+                debug!(%address, %error, "failed to download voted-on block from validator");
+            }
+        }
+    }
+
+    let Some(voted_block) = voted_block else {
+        warn!(
+            %votes_hash,
+            "UnexpectedQuorum: could not fetch the block the quorum voted on; cache may have evicted it",
+        );
+        return;
+    };
+
+    log_block_diff(&voted_block, expected_block);
+}
+
+/// Logs the differences between two blocks that ended up with different hashes,
+/// using the per-component hashes in the block header to point at which body
+/// component differs and then dumping the differing sections.
+fn log_block_diff(quorum: &Block, expected: &Block) {
+    let q = &quorum.header;
+    let e = &expected.header;
+
+    warn!(
+        chain_id = %q.chain_id,
+        "UnexpectedQuorum: validators voted for a block that differs from the expected one",
+    );
+
+    if q.chain_id != e.chain_id {
+        warn!(quorum = %q.chain_id, expected = %e.chain_id, "chain ID mismatch");
+    }
+    if q.height != e.height {
+        warn!(quorum = %q.height, expected = %e.height, "block height mismatch");
+    }
+    if q.epoch != e.epoch {
+        warn!(quorum = %q.epoch, expected = %e.epoch, "epoch mismatch");
+    }
+    if q.timestamp != e.timestamp {
+        warn!(quorum = %q.timestamp, expected = %e.timestamp, "timestamp mismatch");
+    }
+    if q.state_hash != e.state_hash {
+        warn!(quorum = %q.state_hash, expected = %e.state_hash, "post-block state hash mismatch");
+    }
+    if q.previous_block_hash != e.previous_block_hash {
+        warn!(
+            quorum = ?q.previous_block_hash,
+            expected = ?e.previous_block_hash,
+            "previous block hash mismatch",
+        );
+    }
+    if q.authenticated_owner != e.authenticated_owner {
+        warn!(
+            quorum = ?q.authenticated_owner,
+            expected = ?e.authenticated_owner,
+            "authenticated owner mismatch",
+        );
+    }
+    if q.transactions_hash != e.transactions_hash {
+        warn!(
+            quorum_count = quorum.body.transactions.len(),
+            expected_count = expected.body.transactions.len(),
+            quorum = ?quorum.body.transactions,
+            expected = ?expected.body.transactions,
+            "transactions differ",
+        );
+    }
+    if q.messages_hash != e.messages_hash {
+        warn!(
+            quorum = ?quorum.body.messages,
+            expected = ?expected.body.messages,
+            "outgoing messages differ",
+        );
+    }
+    if q.oracle_responses_hash != e.oracle_responses_hash {
+        warn!(
+            quorum = ?quorum.body.oracle_responses,
+            expected = ?expected.body.oracle_responses,
+            "oracle responses differ (a common cause of quorum mismatches)",
+        );
+    }
+    if q.events_hash != e.events_hash {
+        warn!(
+            quorum = ?quorum.body.events,
+            expected = ?expected.body.events,
+            "emitted events differ",
+        );
+    }
+    if q.blobs_hash != e.blobs_hash {
+        warn!(
+            quorum = ?quorum.body.blobs,
+            expected = ?expected.body.blobs,
+            "created blobs differ",
+        );
+    }
+    if q.operation_results_hash != e.operation_results_hash {
+        warn!(
+            quorum = ?quorum.body.operation_results,
+            expected = ?expected.body.operation_results,
+            "operation results differ",
+        );
+    }
+    if q.previous_message_blocks_hash != e.previous_message_blocks_hash {
+        warn!(
+            quorum = ?quorum.body.previous_message_blocks,
+            expected = ?expected.body.previous_message_blocks,
+            "previous-message-blocks index differs",
+        );
+    }
+    if q.previous_event_blocks_hash != e.previous_event_blocks_hash {
+        warn!(
+            quorum = ?quorum.body.previous_event_blocks,
+            expected = ?expected.body.previous_event_blocks,
+            "previous-event-blocks index differs",
+        );
+    }
 }
 
 /// Per-call deduplication for an event-download retry loop. Holds the set of
