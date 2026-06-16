@@ -27,7 +27,6 @@ use linera_base::{
 };
 use linera_execution::{committee::Committee, Message, MessageKind, Operation, OutgoingMessage};
 use serde::{Deserialize, Serialize};
-use similar_asserts::SimpleDiff;
 use tracing::instrument;
 
 use crate::{
@@ -40,6 +39,7 @@ use crate::{
 };
 
 pub mod metadata;
+mod outcome_diff;
 
 pub use metadata::*;
 
@@ -684,36 +684,15 @@ impl BlockExecutionOutcome {
     ///
     /// `self_label` and `other_label` name the two outcomes in the output. The first
     /// line is a single-line summary listing the names of the differing fields, so it
-    /// stays readable on its own in log viewers that show lines in reverse order. It
-    /// is followed by a textual diff of each differing field.
+    /// stays readable on its own in log viewers that show lines in reverse order.
+    ///
+    /// The following lines locate each difference down to the individual element (e.g.
+    /// `messages[2][5]`) and, for the differing values, elide the leading and trailing
+    /// parts that match in both, truncating the differing region if it is very long.
+    /// This keeps the output small even when a single byte of a large binary payload
+    /// differs.
     pub fn diff(&self, other: &Self, self_label: &str, other_label: &str) -> String {
-        use std::fmt::Write as _;
-
-        let mut differing = Vec::new();
-        let mut details = String::new();
-        macro_rules! compare {
-            ($field:ident) => {
-                if self.$field != other.$field {
-                    differing.push(stringify!($field));
-                    let mine = format!("{:#?}", self.$field);
-                    let theirs = format!("{:#?}", other.$field);
-                    let field_diff = SimpleDiff::from_str(&mine, &theirs, self_label, other_label);
-                    // `write!` to a `String` is infallible.
-                    write!(details, "\n\n{}: {field_diff}", stringify!($field)).unwrap();
-                }
-            };
-        }
-
-        compare!(messages);
-        compare!(previous_message_blocks);
-        compare!(previous_event_blocks);
-        compare!(state_hash);
-        compare!(oracle_responses);
-        compare!(events);
-        compare!(blobs);
-        compare!(operation_results);
-
-        format!("differing fields: {differing:?}{details}")
+        outcome_diff::describe(self, other, self_label, other_label)
     }
 }
 
@@ -1040,42 +1019,5 @@ mod signing {
             original_proposal: None,
         };
         assert_eq!(block_proposal.owner(), public_key.into(),);
-    }
-}
-
-#[cfg(test)]
-mod outcome_diff {
-    use linera_base::crypto::{CryptoHash, TestString};
-
-    use crate::data_types::BlockExecutionOutcome;
-
-    #[test]
-    fn lists_only_differing_fields() {
-        let computed = BlockExecutionOutcome {
-            state_hash: CryptoHash::new(&TestString::new("a")),
-            operation_results: vec![],
-            ..BlockExecutionOutcome::default()
-        };
-        let submitted = BlockExecutionOutcome {
-            state_hash: CryptoHash::new(&TestString::new("b")),
-            ..BlockExecutionOutcome::default()
-        };
-
-        let diff = computed.diff(&submitted, "computed", "submitted");
-        let summary = diff.lines().next().unwrap();
-        // The single-line summary names only the field that differs, and stays readable
-        // on its own even when a log viewer shows lines in reverse order.
-        assert_eq!(summary, "differing fields: [\"state_hash\"]");
-        assert!(diff.contains("\n\nstate_hash:"));
-        assert!(!diff.contains("\n\noperation_results:"));
-    }
-
-    #[test]
-    fn equal_outcomes_have_no_differing_fields() {
-        let outcome = BlockExecutionOutcome::default();
-        assert_eq!(
-            outcome.diff(&outcome, "computed", "submitted"),
-            "differing fields: []"
-        );
     }
 }

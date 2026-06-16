@@ -5191,7 +5191,6 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_json",
- "similar-asserts",
  "strum 0.26.3",
  "test-case",
  "thiserror 1.0.69",
