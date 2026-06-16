@@ -1075,9 +1075,8 @@ where
             // We should always agree on the messages and state hash.
             if outcome != verified {
                 return Err(ChainError::CorruptedChainState(format!(
-                    "computed block outcome differs from the certificate.\n\
-                    Computed: {verified:#?}\n\
-                    Submitted: {outcome:#?}"
+                    "computed block outcome differs from the certificate; {}",
+                    verified.diff(&outcome, "computed", "submitted")
                 ))
                 .into());
             }
