@@ -951,22 +951,62 @@ impl<Env: Environment> Client<Env> {
         Ok(())
     }
 
+    /// Downloads the checkpoint certificate at `checkpoint_height` from `remote_node` and
+    /// checks that it is a genuine, quorum-signed checkpoint for `chain_id`.
+    ///
+    /// Returns the certificate only if the validator can actually serve it, the block really is
+    /// a checkpoint, and it is signed by a quorum of a known, current epoch's committee. A
+    /// validator that advertises a height it can't serve, points us at a non-checkpoint block,
+    /// or whose certificate doesn't verify (forged, or from a revoked or not-yet-known epoch),
+    /// yields `None` — so the remote node is trusted only to point us at a height, not to forge
+    /// the snapshot itself.
+    async fn download_verified_checkpoint(
+        &self,
+        remote_node: &RemoteNode<Env::ValidatorNode>,
+        chain_id: ChainId,
+        checkpoint_height: BlockHeight,
+    ) -> Result<Option<ConfirmedBlockCertificate>, chain_client::Error> {
+        let certificates = remote_node
+            .download_certificates_by_heights(chain_id, vec![checkpoint_height])
+            .await?;
+        // `download_certificates_by_heights` already checks the certificate is for `chain_id`
+        // and at `checkpoint_height`.
+        let Some(certificate) = certificates.into_iter().next() else {
+            return Ok(None);
+        };
+        // The advertised height is unsigned, so make sure the block at it actually is a
+        // checkpoint and that the certificate is signed by a quorum before we trust it.
+        if !certificate.block().starts_with_checkpoint() {
+            return Ok(None);
+        }
+        if !matches!(
+            self.check_certificate(&certificate).await?,
+            CheckCertificateResult::New
+        ) {
+            return Ok(None);
+        }
+        Ok(Some(certificate))
+    }
+
     /// Downloads the checkpoint certificate at `checkpoint_height` from `remote_node`
     /// and processes it locally, if our chain isn't already past that height. The
     /// worker's `process_confirmed_block` recognises the gap-plus-checkpoint case and
     /// installs the chain's execution state from the checkpoint blob before re-running
     /// the certificate.
     ///
-    /// The certificate's signatures are still verified against the committee resolved
-    /// from the admin chain's epoch event stream, so the remote node is trusted only
-    /// to point us at a height — not to forge the snapshot itself.
+    /// The certificate's signatures are verified before it is processed, so the remote node is
+    /// trusted only to point us at a height — not to forge the snapshot itself.
+    ///
+    /// Returns whether a checkpoint was actually applied: `false` if we are already past the
+    /// checkpoint, the validator can't serve the certificate it advertised, or that
+    /// certificate doesn't verify.
     #[instrument(level = "trace", skip_all)]
     async fn bootstrap_chain_from_checkpoint(
         &self,
         remote_node: &RemoteNode<Env::ValidatorNode>,
         chain_id: ChainId,
         checkpoint_height: BlockHeight,
-    ) -> Result<(), chain_client::Error> {
+    ) -> Result<bool, chain_client::Error> {
         let local_next = match self.local_node.chain_info(chain_id).await {
             Ok(info) => info.next_block_height,
             // A freshly-created follower whose storage doesn't yet hold this
@@ -977,16 +1017,14 @@ impl<Env: Environment> Client<Env> {
             Err(err) => return Err(err.into()),
         };
         if local_next > checkpoint_height {
-            return Ok(());
+            return Ok(false);
         }
-        let certificates = remote_node
-            .download_certificates_by_heights(chain_id, vec![checkpoint_height])
-            .await?;
-        if certificates.is_empty() {
-            // The validator advertised a checkpoint height it can't actually serve;
-            // skip and let the regular sync path take over.
-            return Ok(());
-        }
+        let Some(certificate) = self
+            .download_verified_checkpoint(remote_node, chain_id, checkpoint_height)
+            .await?
+        else {
+            return Ok(false);
+        };
         // The first attempt at processing the checkpoint cert will fall into the
         // worker's `BlocksNotFound` pre-check if pre-checkpoint sender blocks are
         // missing; `handle_certificate_with_retry` downloads them by hash and
@@ -994,7 +1032,89 @@ impl<Env: Environment> Client<Env> {
         // both its restored state and every certified sender block in storage.
         self.process_certificates(
             slice::from_ref(remote_node),
-            certificates,
+            vec![certificate],
+            None,
+            ProcessConfirmedBlockMode::Execute,
+        )
+        .await?;
+        Ok(true)
+    }
+
+    /// Restores the chain's execution state from the latest checkpoint advertised by the
+    /// committee.
+    ///
+    /// The checkpoint height in a `ChainInfoResponse` is unsigned, so a lagging or malicious
+    /// validator could report a lower height, none at all, or one that doesn't exist. Each
+    /// validator's task therefore verifies that validator's own claim — it downloads the
+    /// certificate at the advertised height and checks its quorum signature — and only a
+    /// verified checkpoint contributes a height. We stop once a quorum has responded (plus a
+    /// grace period) rather than waiting for slow or faulty validators, then bootstrap from the
+    /// highest verified checkpoint. The worst a stale or faulty validator can do is keep us
+    /// from using a more recent checkpoint — never trick us into restoring from a forged one.
+    async fn bootstrap_chain_from_latest_checkpoint(
+        &self,
+        chain_id: ChainId,
+        committee: &Committee,
+        validators: &[RemoteNode<Env::ValidatorNode>],
+    ) -> Result<(), chain_client::Error> {
+        let local_next = match self.local_node.chain_info(chain_id).await {
+            Ok(info) => info.next_block_height,
+            Err(LocalNodeError::BlobsNotFound(_)) => BlockHeight::ZERO,
+            Err(err) => return Err(err.into()),
+        };
+        let query = ChainInfoQuery::new(chain_id).with_latest_checkpoint_height();
+        let result = communicate_with_quorum(
+            validators,
+            committee,
+            |_: &Option<(
+                BlockHeight,
+                ConfirmedBlockCertificate,
+                RemoteNode<Env::ValidatorNode>,
+            )>| (),
+            |remote_node| {
+                let query = query.clone();
+                async move {
+                    let Some(height) = remote_node
+                        .handle_chain_info_query(query)
+                        .await?
+                        .requested_latest_checkpoint_height
+                    else {
+                        return Ok(None);
+                    };
+                    if local_next > height {
+                        return Ok(None);
+                    }
+                    Ok(self
+                        .download_verified_checkpoint(&remote_node, chain_id, height)
+                        .await?
+                        .map(|certificate| (height, certificate, remote_node)))
+                }
+            },
+            self.options.quorum_grace_period,
+        )
+        .await;
+        let responses = match result {
+            Ok((_, responses)) => responses,
+            // We couldn't reach a quorum on the latest checkpoint. Skip this optimization; the
+            // regular per-validator sync path still restores from a checkpoint if it finds one.
+            Err(error) => {
+                debug!(%chain_id, %error, "could not query a quorum for the latest checkpoint");
+                return Ok(());
+            }
+        };
+        // Bootstrap from the highest checkpoint that verified. Its signature is already checked,
+        // so it is reliably bootstrappable; any pre-checkpoint blocks or blobs it needs are
+        // downloaded from the validator that served it.
+        let Some((_, certificate, remote_node)) = responses
+            .into_iter()
+            .filter_map(|(_, verified)| verified)
+            .max_by_key(|(height, _, _)| *height)
+        else {
+            return Ok(());
+        };
+        self.process_certificates(
+            slice::from_ref(&remote_node),
+            vec![certificate],
             None,
             ProcessConfirmedBlockMode::Execute,
         )
@@ -2023,6 +2143,12 @@ impl<Env: Environment> Client<Env> {
 
         let validators = self.make_nodes(&committee)?;
         Box::pin(self.fetch_chain_info(chain_id, &validators)).await?;
+        // Restore from the latest checkpoint advertised by the committee before syncing
+        // blocks, so the per-validator sync below resumes from the post-checkpoint height
+        // instead of restoring from whichever (possibly stale) checkpoint each validator
+        // individually advertises.
+        Box::pin(self.bootstrap_chain_from_latest_checkpoint(chain_id, &committee, &validators))
+            .await?;
         communicate_with_quorum(
             &validators,
             &committee,
